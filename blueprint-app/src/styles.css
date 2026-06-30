@@ -1,21 +1,21 @@
 :root {
-  /* Claude-desktop-inspired warm "paper" palette */
-  --bg: #faf9f5;
-  --sidebar-bg: #f0eee6;
+  /* Claude-desktop-inspired light palette — clean, mostly neutral, warm accent */
+  --bg: #ffffff;
+  --sidebar-bg: #f7f6f4;
   --panel: #ffffff;
-  --panel-2: #f5f3ec;
-  --border: #e7e4d8;
-  --border-strong: #d8d4c4;
-  --text: #1f1e1d;
-  --text-2: #565550;
-  --muted: #918f84;
-  --accent: #c96442;
+  --panel-2: #f6f5f3;
+  --border: #ecebe7;
+  --border-strong: #dddbd4;
+  --text: #1a1a18;
+  --text-2: #605e57;
+  --muted: #9d9b92;
+  --accent: #c45c3f;
   --accent-2: #d97757;
-  --accent-soft: #f3ebe4;
+  --accent-soft: #f4ece7;
   --ok: #2a8c5a;
   --error: #b3402f;
   --error-bg: #f7e9e4;
-  --shadow: 0 1px 2px rgba(60, 50, 40, 0.05), 0 8px 24px rgba(60, 50, 40, 0.07);
+  --shadow: 0 1px 2px rgba(50, 44, 38, 0.04), 0 6px 18px rgba(50, 44, 38, 0.06);
   --radius: 12px;
   --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
@@ -62,37 +62,7 @@ button {
 
 #app {
   display: flex;
-  flex-direction: column;
   height: 100vh;
-}
-
-/* ---------------- Title bar (window move handle) ---------------- */
-#titlebar {
-  flex-shrink: 0;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Leave room for the macOS traffic lights on the left. */
-  padding: 0 16px 0 78px;
-  background: var(--sidebar-bg);
-  border-bottom: 1px solid var(--border);
-}
-#titlebar-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 70%;
-  pointer-events: none;
-}
-
-#layout {
-  flex: 1;
-  min-height: 0;
-  display: flex;
 }
 
 /* ---------------- Sidebar ---------------- */
@@ -110,7 +80,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 14px 8px;
+  /* Top padding doubles as the traffic-light clearance + window drag strip. */
+  padding: 30px 14px 8px;
 }
 
 .source-nav {
@@ -247,16 +218,28 @@ button {
 }
 
 .session-item {
+  position: relative;
   display: flex;
   align-items: center;
   border-radius: 9px;
   transition: background 0.1s;
 }
 .session-item:hover {
-  background: var(--bg);
+  background: var(--panel-2);
 }
 .session-item.active {
   background: var(--accent-soft);
+}
+.session-item.active::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--accent);
 }
 .session-open {
   display: flex;

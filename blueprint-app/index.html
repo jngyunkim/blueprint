@@ -10,13 +10,8 @@
 
   <body>
     <div id="app">
-      <div id="titlebar" data-tauri-drag-region>
-        <span id="titlebar-title" data-tauri-drag-region>Blueprint</span>
-      </div>
-
-      <div id="layout">
       <aside id="sidebar">
-        <header class="sidebar-header">
+        <header class="sidebar-header" data-tauri-drag-region>
           <div class="brand">
             <span class="brand-mark">✻</span>
             <h1>Blueprint</h1>
@@ -56,8 +51,9 @@
         </div>
 
         <section id="viewer" class="viewer hidden">
-          <header class="viewer-header">
+          <header class="viewer-header" data-tauri-drag-region>
             <div class="viewer-title">
+              <h2 id="viewer-title">—</h2>
               <span id="viewer-sub" class="viewer-sub"></span>
             </div>
             <div class="viewer-actions">
@@ -89,7 +85,6 @@
           <pre id="transcript-view" class="content-view transcript-view hidden"></pre>
         </section>
       </main>
-      </div>
     </div>
 
     <div id="lightbox" class="lightbox hidden">

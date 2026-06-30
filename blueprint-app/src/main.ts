@@ -74,7 +74,7 @@ const sessionList = $("#session-list");
 const filterInput = $<HTMLInputElement>("#filter-input");
 const emptyState = $("#empty-state");
 const viewer = $("#viewer");
-const titlebarTitle = $("#titlebar-title");
+const viewerTitle = $("#viewer-title");
 const viewerSub = $("#viewer-sub");
 const statusBar = $("#status-bar");
 const diagramsView = $("#diagrams-view");
@@ -195,7 +195,6 @@ function confirmDelete(item: HTMLElement, s: SessionMeta) {
       sessions = sessions.filter((x) => x.path !== s.path);
       if (selected?.path === s.path) {
         selected = null;
-        titlebarTitle.textContent = "Blueprint";
         viewer.classList.add("hidden");
         emptyState.classList.remove("hidden");
       }
@@ -236,7 +235,7 @@ async function selectSession(s: SessionMeta) {
   renderSessionList();
   emptyState.classList.add("hidden");
   viewer.classList.remove("hidden");
-  titlebarTitle.textContent = s.title;
+  viewerTitle.textContent = s.title;
   viewerSub.textContent = `${s.project} · ${fmtDate(s.modified)}`;
   $("#refresh-source-btn").classList.toggle("hidden", !s.path.endsWith(".links.json"));
   hasDiagrams = false;
