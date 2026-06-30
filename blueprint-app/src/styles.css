@@ -766,6 +766,229 @@ button {
   cursor: pointer;
 }
 
+/* ---- Notion import button ---- */
+.notion-import {
+  margin: 0 12px 8px;
+  padding: 8px;
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: 9px;
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.notion-import:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.footer-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.footer-row #update-btn {
+  flex: 1;
+}
+
+/* ---- Modals ---- */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(40, 32, 26, 0.45);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  width: 440px;
+  max-width: calc(100vw - 48px);
+  padding: 22px 24px 24px;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.modal-head h2 {
+  font-family: var(--serif);
+  font-size: 19px;
+  font-weight: 500;
+  margin: 0;
+}
+.setting {
+  margin-top: 18px;
+}
+.setting > label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.setting-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 4px 0 10px;
+}
+.setting input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.setting input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.setting-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.save-status {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.seg {
+  display: inline-flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 2px;
+}
+.seg button {
+  background: none;
+  border: none;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+  border-radius: 7px;
+}
+.seg button.active {
+  background: var(--panel);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
+
+/* ---- Design levels accordion ---- */
+.design-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.level-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.level-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 14px 18px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+}
+.level-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 9px;
+  border-radius: 20px;
+  color: white;
+  flex-shrink: 0;
+}
+.level-badge.level-0 {
+  background: #5b8def;
+}
+.level-badge.level-1 {
+  background: var(--accent);
+}
+.level-badge.level-2 {
+  background: #8a7a52;
+}
+.level-title {
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+}
+.level-caret {
+  color: var(--muted);
+  transition: transform 0.18s;
+}
+.level-card.open .level-caret {
+  transform: rotate(180deg);
+}
+.level-body {
+  display: none;
+  padding: 0 20px 18px;
+  border-top: 1px solid var(--border);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.level-card.open .level-body {
+  display: block;
+}
+.level-body h1,
+.level-body h2,
+.level-body h3 {
+  font-size: 14px;
+  color: var(--text);
+  margin: 14px 0 6px;
+}
+.level-body p {
+  margin: 8px 0;
+}
+.level-body ul,
+.level-body ol {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+.level-body li {
+  margin: 3px 0;
+}
+.level-body code {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: "SF Mono", ui-monospace, monospace;
+}
+.level-body pre {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 12px;
+  overflow-x: auto;
+}
+.level-body pre code {
+  border: none;
+  padding: 0;
+  background: none;
+}
+
 .hidden {
   display: none !important;
 }

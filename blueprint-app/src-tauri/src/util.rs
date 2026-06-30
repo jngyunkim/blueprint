@@ -37,6 +37,16 @@ fn which_on_path(name: &str) -> bool {
     false
 }
 
+/// An instruction appended to generation prompts so natural-language output is
+/// written in the user's preferred language. Code, identifiers, and proper
+/// nouns are kept as-is. Empty for English (the model's default here).
+pub fn lang_clause(lang: &str) -> &'static str {
+    match lang {
+        "ko" => "\n\nIMPORTANT: Write all natural-language text (titles, explanations, definitions, content) in Korean. Keep code, identifiers, file paths, and proper nouns unchanged.",
+        _ => "",
+    }
+}
+
 /// Return the last `max` bytes of `s`, snapped forward to a UTF-8 char boundary
 /// so slicing never panics on multi-byte characters.
 pub fn tail_chars(s: &str, max: usize) -> &str {

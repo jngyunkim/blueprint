@@ -73,7 +73,7 @@ pub fn check_deps() -> DepStatus {
 
 /// Build the full prompt (instructions + transcript), truncating very large
 /// transcripts from the front so the most recent design discussion is kept.
-fn build_prompt(transcript: &str) -> String {
+fn build_prompt(transcript: &str, lang: &str) -> String {
     let body = if transcript.len() > MAX_TRANSCRIPT_CHARS {
         format!(
             "[...transcript truncated...]\n{}",
@@ -82,7 +82,7 @@ fn build_prompt(transcript: &str) -> String {
     } else {
         transcript.to_string()
     };
-    format!("{PROMPT}{body}")
+    format!("{PROMPT}{body}{}", crate::util::lang_clause(lang))
 }
 
 /// Invoke the local Claude Code CLI in headless mode, piping the prompt via
@@ -151,8 +151,8 @@ fn parse_diagrams(raw: &str) -> Result<DiagramSet, String> {
 }
 
 /// Full generation pipeline: transcript -> claude -> parse -> render mingrammer.
-pub fn generate(transcript: &str, model: &str) -> Result<DiagramSet, String> {
-    let prompt = build_prompt(transcript);
+pub fn generate(transcript: &str, model: &str, lang: &str) -> Result<DiagramSet, String> {
+    let prompt = build_prompt(transcript, lang);
     // One retry on parse failure (models occasionally add stray prose).
     let mut last_err = String::new();
     for attempt in 0..2 {

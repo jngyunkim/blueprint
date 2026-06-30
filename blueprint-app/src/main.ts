@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import mermaid from "mermaid";
+import { marked } from "marked";
 
 mermaid.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "loose" });
 
@@ -28,6 +29,9 @@ type DiagramSet = { diagrams: Diagram[] };
 type Term = { term: string; definition: string; category: string };
 type GlossarySet = { terms: Term[] };
 
+type Level = { level: string; title: string; content: string };
+type DesignDoc = { levels: Level[] };
+
 type DepStatus = {
   claude: boolean;
   python: boolean;
@@ -37,11 +41,18 @@ type DepStatus = {
 
 let sessions: SessionMeta[] = [];
 let selected: SessionMeta | null = null;
-let currentView: "diagrams" | "terms" | "transcript" = "diagrams";
+type View = "diagrams" | "design" | "terms" | "transcript";
+let currentView: View = "diagrams";
 let hasDiagrams = false;
 let hasGlossary = false;
+let hasDesign = false;
 let termsLoadedForPath: string | null = null;
+let designLoadedForPath: string | null = null;
 const collapsedGroups = new Set<string>();
+
+type Lang = "en" | "ko";
+const savedLang = localStorage.getItem("bp-lang");
+let lang: Lang = savedLang === "ko" ? "ko" : "en";
 
 type Model = "haiku" | "sonnet" | "opus";
 const MODEL_LABELS: Record<Model, string> = {
@@ -65,6 +76,7 @@ const viewerTitle = $("#viewer-title");
 const viewerSub = $("#viewer-sub");
 const statusBar = $("#status-bar");
 const diagramsView = $("#diagrams-view");
+const designView = $("#design-view");
 const termsView = $("#terms-view");
 const transcriptView = $<HTMLPreElement>("#transcript-view");
 
@@ -220,8 +232,11 @@ async function selectSession(s: SessionMeta) {
   viewerSub.textContent = `${s.project} · ${fmtDate(s.modified)}`;
   hasDiagrams = false;
   hasGlossary = false;
+  hasDesign = false;
   termsLoadedForPath = null;
+  designLoadedForPath = null;
   termsView.innerHTML = "";
+  designView.innerHTML = "";
   switchView("diagrams");
   transcriptView.textContent = "Loading transcript…";
   await showDiagramsOrPrompt(s);
@@ -242,6 +257,7 @@ async function showDiagramsOrPrompt(s: SessionMeta) {
   diagramsView.innerHTML = "";
   const cached = await invoke<DiagramSet | null>("cached_diagrams", {
     path: s.path,
+    lang,
   });
   if (selected?.path !== s.path) return; // user switched away
   if (cached && cached.diagrams && cached.diagrams.length > 0) {
@@ -279,6 +295,7 @@ async function loadDiagrams(s: SessionMeta, force: boolean) {
       path: s.path,
       force,
       model,
+      lang,
     });
     stop();
     if (selected?.path !== s.path) return; // user switched away
@@ -378,17 +395,21 @@ function closeLightbox() {
   $("#lightbox-body").innerHTML = "";
 }
 
-function switchView(view: "diagrams" | "terms" | "transcript") {
+function switchView(view: View) {
   currentView = view;
   document.querySelectorAll(".tab").forEach((t) => {
     t.classList.toggle("active", (t as HTMLElement).dataset.view === view);
   });
   diagramsView.classList.toggle("hidden", view !== "diagrams");
+  designView.classList.toggle("hidden", view !== "design");
   termsView.classList.toggle("hidden", view !== "terms");
   transcriptView.classList.toggle("hidden", view !== "transcript");
   updateRegenButton();
   if (view === "terms" && selected && termsLoadedForPath !== selected.path) {
     showTermsOrPrompt(selected);
+  }
+  if (view === "design" && selected && designLoadedForPath !== selected.path) {
+    showDesignOrPrompt(selected);
   }
 }
 
@@ -398,8 +419,95 @@ function updateRegenButton() {
   const btn = $("#regen-btn");
   const show =
     (currentView === "diagrams" && hasDiagrams) ||
-    (currentView === "terms" && hasGlossary);
+    (currentView === "terms" && hasGlossary) ||
+    (currentView === "design" && hasDesign);
   btn.classList.toggle("hidden", !show);
+}
+
+// ---------- Design levels ----------
+
+async function showDesignOrPrompt(s: SessionMeta) {
+  designLoadedForPath = s.path;
+  setStatus("");
+  designView.innerHTML = "";
+  const cached = await invoke<DesignDoc | null>("cached_design", {
+    path: s.path,
+    lang,
+  });
+  if (selected?.path !== s.path || currentView !== "design") return;
+  if (cached && cached.levels && cached.levels.length > 0) {
+    hasDesign = true;
+    renderDesign(cached);
+  } else {
+    showDesignPrompt(s);
+  }
+  updateRegenButton();
+}
+
+function showDesignPrompt(s: SessionMeta) {
+  designView.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "generate-prompt";
+  wrap.innerHTML = `
+    <p>No layered design view generated yet.</p>
+    <button class="generate-btn">✦ Generate Design Levels</button>
+    <p class="hint">Blueprint breaks the document into High-level → Detailed →
+      Implementation, strictly from what the document actually says.</p>`;
+  wrap.querySelector(".generate-btn")!.addEventListener("click", () =>
+    loadDesign(s, false),
+  );
+  designView.appendChild(wrap);
+}
+
+async function loadDesign(s: SessionMeta, force: boolean) {
+  setStatus("");
+  const stop = renderLoading(
+    designView,
+    force ? "Regenerating design levels…" : "Building design levels…",
+  );
+  try {
+    const doc = await invoke<DesignDoc>("generate_design", {
+      path: s.path,
+      force,
+      model,
+      lang,
+    });
+    stop();
+    if (selected?.path !== s.path) return;
+    hasDesign = true;
+    updateRegenButton();
+    renderDesign(doc);
+  } catch (e) {
+    stop();
+    if (selected?.path !== s.path) return;
+    designView.innerHTML = "";
+    setStatus(String(e), "error");
+  }
+}
+
+function renderDesign(doc: DesignDoc) {
+  designView.innerHTML = "";
+  if (!doc.levels || doc.levels.length === 0) {
+    designView.innerHTML = `<p class="muted">No design levels were produced.</p>`;
+    return;
+  }
+  doc.levels.forEach((lvl, i) => {
+    const card = document.createElement("section");
+    card.className = "level-card" + (i === 0 ? " open" : "");
+    const header = document.createElement("button");
+    header.className = "level-head";
+    header.innerHTML = `
+      <span class="level-badge level-${i}">${escapeHtml(lvl.level)}</span>
+      <span class="level-title">${escapeHtml(lvl.title)}</span>
+      <span class="level-caret">▾</span>`;
+    const bodyEl = document.createElement("div");
+    bodyEl.className = "level-body";
+    bodyEl.innerHTML = marked.parse(lvl.content || "") as string;
+    header.addEventListener("click", () => card.classList.toggle("open"));
+    card.appendChild(header);
+    card.appendChild(bodyEl);
+    designView.appendChild(card);
+  });
 }
 
 // ---------- Glossary (Terms) ----------
@@ -410,6 +518,7 @@ async function showTermsOrPrompt(s: SessionMeta) {
   termsView.innerHTML = "";
   const cached = await invoke<GlossarySet | null>("cached_glossary", {
     path: s.path,
+    lang,
   });
   if (selected?.path !== s.path || currentView !== "terms") return;
   if (cached && cached.terms && cached.terms.length > 0) {
@@ -447,6 +556,7 @@ async function loadGlossary(s: SessionMeta, force: boolean) {
       path: s.path,
       force,
       model,
+      lang,
     });
     stop();
     if (selected?.path !== s.path) return;
@@ -561,20 +671,64 @@ function updateModelUI() {
   });
 }
 
+function updateLangUI() {
+  document.querySelectorAll("#lang-select button").forEach((b) => {
+    b.classList.toggle("active", (b as HTMLElement).dataset.lang === lang);
+  });
+}
+
+async function openSettings() {
+  updateLangUI();
+  const has = await invoke<boolean>("has_notion_token");
+  const tokenInput = $<HTMLInputElement>("#notion-token");
+  tokenInput.value = "";
+  tokenInput.placeholder = has ? "•••••••••• (saved — paste to replace)" : "ntn_… / secret_…";
+  $("#notion-save-status").textContent = "";
+  $("#settings-modal").classList.remove("hidden");
+}
+
+async function saveNotionToken() {
+  const token = $<HTMLInputElement>("#notion-token").value.trim();
+  if (!token) return;
+  try {
+    await invoke("set_notion_token", { token });
+    $("#notion-save-status").textContent = "Saved ✓";
+    $<HTMLInputElement>("#notion-token").value = "";
+  } catch (e) {
+    $("#notion-save-status").textContent = String(e);
+  }
+}
+
+async function importNotion() {
+  const url = $<HTMLInputElement>("#notion-url").value.trim();
+  const status = $("#notion-import-status");
+  if (!url) return;
+  status.textContent = "Importing…";
+  try {
+    const meta = await invoke<SessionMeta>("import_notion", { url });
+    status.textContent = "";
+    $("#notion-modal").classList.add("hidden");
+    $<HTMLInputElement>("#notion-url").value = "";
+    await refreshSessions();
+    selectSession(meta);
+  } catch (e) {
+    status.textContent = String(e);
+  }
+}
+
 function wireUi() {
   filterInput.addEventListener("input", renderSessionList);
   $("#refresh-btn").addEventListener("click", refreshSessions);
   $("#regen-btn").addEventListener("click", () => {
     if (!selected) return;
     if (currentView === "terms") loadGlossary(selected, true);
+    else if (currentView === "design") loadDesign(selected, true);
     else loadDiagrams(selected, true);
   });
   $("#update-btn").addEventListener("click", () => checkForUpdates(true));
   document.querySelectorAll(".tab").forEach((t) => {
     t.addEventListener("click", () =>
-      switchView(
-        (t as HTMLElement).dataset.view as "diagrams" | "terms" | "transcript",
-      ),
+      switchView((t as HTMLElement).dataset.view as View),
     );
   });
   document.querySelectorAll("#model-select button").forEach((b) => {
@@ -584,12 +738,47 @@ function wireUi() {
       updateModelUI();
     });
   });
+  document.querySelectorAll("#lang-select button").forEach((b) => {
+    b.addEventListener("click", () => {
+      lang = (b as HTMLElement).dataset.lang as Lang;
+      localStorage.setItem("bp-lang", lang);
+      updateLangUI();
+    });
+  });
+
+  // Settings modal
+  $("#settings-btn").addEventListener("click", openSettings);
+  $("#settings-close").addEventListener("click", () =>
+    $("#settings-modal").classList.add("hidden"),
+  );
+  $("#notion-save").addEventListener("click", saveNotionToken);
+
+  // Notion import modal
+  $("#notion-import-btn").addEventListener("click", () =>
+    $("#notion-modal").classList.remove("hidden"),
+  );
+  $("#notion-modal-close").addEventListener("click", () =>
+    $("#notion-modal").classList.add("hidden"),
+  );
+  $("#notion-import-go").addEventListener("click", importNotion);
+
+  // Backdrop click closes modals
+  document.querySelectorAll(".modal").forEach((m) => {
+    m.addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) (m as HTMLElement).classList.add("hidden");
+    });
+  });
+
   $("#lightbox-close").addEventListener("click", closeLightbox);
   $("#lightbox").addEventListener("click", (e) => {
     if (e.target === e.currentTarget) closeLightbox();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeLightbox();
+    if (e.key === "Escape") {
+      closeLightbox();
+      $("#settings-modal").classList.add("hidden");
+      $("#notion-modal").classList.add("hidden");
+    }
   });
 }
 

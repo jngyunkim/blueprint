@@ -42,15 +42,44 @@ npm run tauri build
 # bundle: src-tauri/target/release/bundle/macos/
 ```
 
+## Sources
+
+- **Claude Code sessions** — scanned from `~/.claude/projects/*.jsonl`.
+- **Notion pages** — "Import from Notion" with a page URL. Fetched via the
+  Notion REST API using a token saved in Settings (stored locally in the OS
+  config dir, never in the repo). Saved as a local `.md` source, after which the
+  same pipeline applies.
+
+## Tabs
+
+- **Diagrams** — mermaid (+ optional mingrammer infra), expand-to-lightbox.
+- **Design** — the document broken into **High-level → Detailed →
+  Implementation**, strictly grounded in the document (won't invent specifics).
+- **Terms** — contextual technical glossary.
+- **Transcript** — the extracted source text.
+
+Each generated artifact has an explicit Generate button and is cached by source
+path + mtime, namespaced per kind **and language**.
+
+## Settings
+
+- **Language** (English / 한국어) — language of generated natural-language text.
+- **Notion token** — for importing Notion pages.
+- **Model** (header): Fast = Haiku, Balanced = Sonnet, Best = Opus.
+
 ## Layout
 
 - `src-tauri/src/session.rs` — scan + JSONL parse + transcript extraction
+- `src-tauri/src/notion.rs` — Notion URL parsing + REST fetch → markdown source
 - `src-tauri/src/diagram.rs` — claude invocation, JSON parse, mingrammer render
-- `src-tauri/src/cache.rs` — diagram cache (path + mtime key)
-- `src-tauri/src/util.rs` — binary resolution for GUI-launched PATH
-- `src/main.ts` — UI: session list, diagram rendering, transcript view
+- `src-tauri/src/glossary.rs` / `design.rs` — glossary + layered design generation
+- `src-tauri/src/cache.rs` — artifact cache (namespace + path + mtime key)
+- `src-tauri/src/config.rs` — local settings (Notion token)
+- `src/main.ts` — UI
 
-The default model is `sonnet` (see `DEFAULT_MODEL` in `lib.rs`).
+Generation uses a stripped headless `claude` (`--strict-mcp-config`,
+`--setting-sources ""`, strict-JSON system prompt) for speed and reliable
+parsing. Default model is `sonnet` (`DEFAULT_MODEL` in `lib.rs`).
 
 ## Releases & in-app updates
 

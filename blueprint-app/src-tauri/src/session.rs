@@ -143,6 +143,16 @@ fn read_session_meta(path: &Path) -> Option<SessionMeta> {
     })
 }
 
+/// Resolve a source's text. Notion sources are stored as raw `.md` files;
+/// Claude Code sessions are `.jsonl` and need transcript extraction.
+pub fn resolve_transcript(path: &str) -> Result<String, String> {
+    if path.ends_with(".md") {
+        fs::read_to_string(path).map_err(|e| e.to_string())
+    } else {
+        extract_transcript(path)
+    }
+}
+
 /// Extract a clean text transcript (user + assistant text only) from a session,
 /// dropping tool calls, tool results, file snapshots, and system noise.
 pub fn extract_transcript(path: &str) -> Result<String, String> {

@@ -33,8 +33,12 @@ Here is the conversation transcript:
 
 "#;
 
-pub fn generate(transcript: &str, model: &str) -> Result<GlossarySet, String> {
-    let prompt = format!("{PROMPT}{}", tail_chars(transcript, MAX_TRANSCRIPT_CHARS));
+pub fn generate(transcript: &str, model: &str, lang: &str) -> Result<GlossarySet, String> {
+    let prompt = format!(
+        "{PROMPT}{}{}",
+        tail_chars(transcript, MAX_TRANSCRIPT_CHARS),
+        crate::util::lang_clause(lang)
+    );
     let mut last_err = String::new();
     for attempt in 0..2 {
         let result = run_claude(&prompt, model)?;

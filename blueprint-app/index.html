@@ -24,11 +24,16 @@
           <input id="filter-input" placeholder="Filter sessions" />
         </div>
 
+        <button id="notion-import-btn" class="notion-import">+ Import from Notion</button>
+
         <div id="session-list"></div>
 
         <div class="sidebar-footer">
           <div id="dep-status" class="dep-status"></div>
-          <button id="update-btn" title="Check for updates">Check for updates</button>
+          <div class="footer-row">
+            <button id="update-btn" title="Check for updates">Check for updates</button>
+            <button id="settings-btn" class="icon-btn" title="Settings">⚙</button>
+          </div>
         </div>
       </aside>
 
@@ -62,12 +67,14 @@
 
           <nav class="tabbar">
             <button class="tab active" data-view="diagrams">Diagrams</button>
+            <button class="tab" data-view="design">Design</button>
             <button class="tab" data-view="terms">Terms</button>
             <button class="tab" data-view="transcript">Transcript</button>
           </nav>
 
           <div id="status-bar" class="status-bar hidden"></div>
           <div id="diagrams-view" class="content-view diagrams-view"></div>
+          <div id="design-view" class="content-view design-view hidden"></div>
           <div id="terms-view" class="content-view terms-view hidden"></div>
           <pre id="transcript-view" class="content-view transcript-view hidden"></pre>
         </section>
@@ -80,6 +87,53 @@
         <button id="lightbox-close" class="icon-btn" title="Close">✕</button>
       </div>
       <div id="lightbox-body" class="lightbox-body"></div>
+    </div>
+
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2>Settings</h2>
+          <button id="settings-close" class="icon-btn" title="Close">✕</button>
+        </div>
+
+        <div class="setting">
+          <label>Language</label>
+          <p class="setting-hint">Language for generated text (definitions, explanations, design levels).</p>
+          <div class="seg" id="lang-select">
+            <button data-lang="en">English</button>
+            <button data-lang="ko">한국어</button>
+          </div>
+        </div>
+
+        <div class="setting">
+          <label>Notion API token</label>
+          <p class="setting-hint">Create an internal integration at
+            notion.so/my-integrations, share the pages you want with it, then
+            paste the token. Stored locally on this machine.</p>
+          <input id="notion-token" type="password" placeholder="ntn_… / secret_…" />
+          <div class="setting-actions">
+            <button id="notion-save" class="ghost-btn">Save token</button>
+            <span id="notion-save-status" class="save-status"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="notion-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2>Import from Notion</h2>
+          <button id="notion-modal-close" class="icon-btn" title="Close">✕</button>
+        </div>
+        <div class="setting">
+          <label>Notion page URL</label>
+          <input id="notion-url" type="text" placeholder="https://www.notion.so/…" />
+          <div class="setting-actions">
+            <button id="notion-import-go" class="ghost-btn">Import</button>
+            <span id="notion-import-status" class="save-status"></span>
+          </div>
+        </div>
+      </div>
     </div>
   </body>
 </html>
