@@ -225,9 +225,14 @@ fn fetch_combined(urls: &[String]) -> Result<String, String> {
         .arg("json")
         .arg("--model")
         .arg("sonnet")
+        // Allow gh, WebFetch, and the Notion connector. The claude.ai Notion
+        // connector surfaces in headless mode as the `claude_ai_Notion` MCP
+        // server; we also allow a locally-registered `notion` server as a
+        // fallback. Allowing a server prefix permits all of its tools.
         .arg("--allowedTools")
         .arg("Bash(gh:*)")
         .arg("WebFetch")
+        .arg("mcp__claude_ai_Notion")
         .arg("mcp__notion")
         .current_dir(work_dir())
         .env("PATH", augmented_path())
