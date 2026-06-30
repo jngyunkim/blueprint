@@ -230,6 +230,7 @@ async function selectSession(s: SessionMeta) {
   viewer.classList.remove("hidden");
   viewerTitle.textContent = s.title;
   viewerSub.textContent = `${s.project} · ${fmtDate(s.modified)}`;
+  $("#refresh-source-btn").classList.toggle("hidden", !s.path.endsWith(".links.json"));
   hasDiagrams = false;
   hasGlossary = false;
   hasDesign = false;
@@ -699,15 +700,20 @@ function openSettings() {
 }
 
 async function importLink() {
-  const url = $<HTMLInputElement>("#import-url").value.trim();
+  const urls = $<HTMLTextAreaElement>("#import-url")
+    .value.split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const title = $<HTMLInputElement>("#import-title").value.trim() || null;
   const status = $("#import-status");
-  if (!url) return;
-  status.textContent = "Fetching via Claude Code… (can take a moment)";
+  if (urls.length === 0) return;
+  status.textContent = "Adding…";
   try {
-    const meta = await invoke<SessionMeta>("import_link", { url });
+    const meta = await invoke<SessionMeta>("import_link", { urls, title });
     status.textContent = "";
     $("#import-modal").classList.add("hidden");
-    $<HTMLInputElement>("#import-url").value = "";
+    $<HTMLTextAreaElement>("#import-url").value = "";
+    $<HTMLInputElement>("#import-title").value = "";
     await refreshSessions();
     selectSession(meta);
   } catch (e) {
@@ -725,6 +731,15 @@ function wireUi() {
     else loadDiagrams(selected, true);
   });
   $("#update-btn").addEventListener("click", () => checkForUpdates(true));
+  $("#refresh-source-btn").addEventListener("click", async () => {
+    if (!selected) return;
+    try {
+      await invoke("refresh_source", { path: selected.path });
+      selectSession(selected); // mtime bumped -> caches miss -> re-fetch on next generate
+    } catch (e) {
+      setStatus(String(e), "error");
+    }
+  });
   document.querySelectorAll(".tab").forEach((t) => {
     t.addEventListener("click", () =>
       switchView((t as HTMLElement).dataset.view as View),

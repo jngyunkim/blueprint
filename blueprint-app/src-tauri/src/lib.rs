@@ -20,6 +20,16 @@ fn lang_of(lang: Option<String>) -> String {
     }
 }
 
+/// Resolve any source to its text: link sources fetch their URLs dynamically;
+/// Notion/web `.md` are raw; Claude Code `.jsonl` are transcript-extracted.
+fn source_transcript(path: &str) -> Result<String, String> {
+    if imported::is_link_source(path) {
+        imported::resolve(path)
+    } else {
+        session::resolve_transcript(path)
+    }
+}
+
 /// Only allow the three speed/quality tiers the UI exposes; fall back to the
 /// default for anything unexpected.
 fn resolve_model(model: Option<String>) -> String {
@@ -43,7 +53,7 @@ async fn list_sessions() -> Vec<SessionMeta> {
 
 #[tauri::command]
 async fn get_transcript(path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || session::resolve_transcript(&path))
+    tauri::async_runtime::spawn_blocking(move || source_transcript(&path))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -91,7 +101,7 @@ async fn generate_diagrams(
                 return Ok(cached);
             }
         }
-        let transcript = session::resolve_transcript(&path)?;
+        let transcript = source_transcript(&path)?;
         if transcript.trim().is_empty() {
             return Err("This source has no readable text.".to_string());
         }
@@ -133,7 +143,7 @@ async fn generate_glossary(
                 return Ok(cached);
             }
         }
-        let transcript = session::resolve_transcript(&path)?;
+        let transcript = source_transcript(&path)?;
         if transcript.trim().is_empty() {
             return Err("This source has no readable text.".to_string());
         }
@@ -175,7 +185,7 @@ async fn generate_design(
                 return Ok(cached);
             }
         }
-        let transcript = session::resolve_transcript(&path)?;
+        let transcript = source_transcript(&path)?;
         if transcript.trim().is_empty() {
             return Err("This source has no readable text.".to_string());
         }
@@ -189,11 +199,19 @@ async fn generate_design(
 
 // ---------- Imported link sources ----------
 
-/// Fetch a GitHub / Notion / web link by delegating to the local Claude CLI
-/// (gh + WebFetch), saving it as a local source. No API keys required.
+/// Create a link source from one or more GitHub / Notion / web URLs. Content is
+/// fetched dynamically (via the local Claude CLI) at generation time — no keys.
 #[tauri::command]
-async fn import_link(url: String) -> Result<SessionMeta, String> {
-    tauri::async_runtime::spawn_blocking(move || imported::import(&url))
+async fn import_link(urls: Vec<String>, title: Option<String>) -> Result<SessionMeta, String> {
+    tauri::async_runtime::spawn_blocking(move || imported::create_source(urls, title))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Force a link source to re-fetch its URLs on the next generation.
+#[tauri::command]
+async fn refresh_source(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || imported::refresh(&path))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -275,6 +293,7 @@ pub fn run() {
             cached_design,
             generate_design,
             import_link,
+            refresh_source,
             delete_session
         ])
         .run(tauri::generate_context!())

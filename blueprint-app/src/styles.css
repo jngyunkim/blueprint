@@ -433,6 +433,16 @@ button {
 .ghost-btn:hover {
   filter: brightness(1.07);
 }
+.ghost-btn.secondary {
+  background: var(--panel-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+.ghost-btn.secondary:hover {
+  filter: none;
+  color: var(--text);
+  border-color: var(--accent);
+}
 
 .tabbar {
   display: flex;
@@ -839,7 +849,8 @@ button {
   line-height: 1.5;
   margin: 4px 0 10px;
 }
-.setting input {
+.setting input,
+.setting textarea {
   width: 100%;
   padding: 9px 11px;
   border: 1px solid var(--border);
@@ -847,8 +858,16 @@ button {
   background: var(--bg);
   color: var(--text);
   font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
 }
-.setting input:focus {
+.setting textarea {
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.setting input:focus,
+.setting textarea:focus {
   outline: none;
   border-color: var(--accent);
 }

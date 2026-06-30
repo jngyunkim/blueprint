@@ -61,6 +61,7 @@
                 <button data-model="sonnet">Balanced</button>
                 <button data-model="opus">Best</button>
               </div>
+              <button id="refresh-source-btn" class="ghost-btn secondary hidden" title="Re-fetch this link's latest content">⤓ Refresh</button>
               <button id="regen-btn" class="ghost-btn" title="Regenerate">↻ Regenerate</button>
             </div>
           </header>
@@ -114,12 +115,18 @@
           <button id="import-modal-close" class="icon-btn" title="Close">✕</button>
         </div>
         <div class="setting">
-          <label>GitHub or Notion URL</label>
-          <p class="setting-hint">Blueprint asks your local Claude Code to fetch
-            it (GitHub via the gh CLI, others via web). No API keys needed.</p>
-          <input id="import-url" type="text" placeholder="https://github.com/… or https://notion.so/…" />
+          <label>GitHub / Notion links — one per line</label>
+          <p class="setting-hint">Add one or more links (GitHub and Notion can be
+            mixed). Blueprint asks your local Claude Code to fetch them at
+            generation time — GitHub via the gh CLI, Notion via the Notion MCP
+            connector. No API keys.</p>
+          <textarea id="import-url" rows="4" placeholder="https://github.com/org/repo/pull/123&#10;https://www.notion.so/…"></textarea>
+        </div>
+        <div class="setting">
+          <label>Name (optional)</label>
+          <input id="import-title" type="text" placeholder="e.g. Session Controller monitoring" />
           <div class="setting-actions">
-            <button id="import-go" class="ghost-btn">Import</button>
+            <button id="import-go" class="ghost-btn">Add source</button>
             <span id="import-status" class="save-status"></span>
           </div>
         </div>
