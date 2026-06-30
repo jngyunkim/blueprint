@@ -169,7 +169,7 @@ function renderSessionList() {
       const del = document.createElement("button");
       del.className = "session-del";
       del.title = "Move session to Trash";
-      del.textContent = "🗑";
+      del.textContent = "✕";
       del.addEventListener("click", (e) => {
         e.stopPropagation();
         confirmDelete(item, s);
@@ -413,9 +413,9 @@ function updateGenerateButton() {
   }
   btn.classList.remove("hidden");
   if (currentTreeId === null) {
-    btn.textContent = forest ? "↻ Regenerate overview" : "✦ Generate overview";
+    btn.textContent = forest ? "↻ Regenerate overview" : "Generate overview";
   } else {
-    btn.textContent = treeCache[currentTreeId] ? "↻ Regenerate" : "✦ Generate";
+    btn.textContent = treeCache[currentTreeId] ? "↻ Regenerate" : "Generate";
   }
 }
 
@@ -495,12 +495,11 @@ function renderForestPlaceholder() {
   const scroll = scrollPanel();
   scroll.innerHTML = `
     <div class="generate-prompt">
-      <div class="generate-art">✦</div>
       <p>No overview generated for this source yet.</p>
-      <button class="generate-btn">✦ Generate overview</button>
-      <p class="hint">Monet gives you the big picture — the forest — then lists the
-        components worth exploring. Pick any one to drill into its details, with
-        inline diagrams and hover-over term definitions. Cached after the first run.</p>
+      <button class="generate-btn">Generate overview</button>
+      <p class="hint">Monet gives you the big picture, then lists the components
+        worth exploring. Pick any one to drill into its details, with inline
+        diagrams and hover-over term definitions. Cached after the first run.</p>
     </div>`;
   scroll.querySelector(".generate-btn")!.addEventListener("click", () =>
     generateForest(false),
@@ -539,7 +538,7 @@ function renderTreeView() {
 
   const bar = document.createElement("div");
   bar.className = "tree-bar";
-  bar.innerHTML = `<button class="tree-back">← Forest</button>
+  bar.innerHTML = `<button class="tree-back">← Overview</button>
     <span class="tree-crumb">${escapeHtml(name)}</span>`;
   bar.querySelector(".tree-back")!.addEventListener("click", backToForest);
   designView.appendChild(bar);
@@ -556,9 +555,8 @@ function renderTreeView() {
   if (!t) {
     scroll.innerHTML = `
       <div class="generate-prompt">
-        <div class="generate-art">✦</div>
         <p><b>${escapeHtml(name)}</b> isn't generated yet.</p>
-        <button class="generate-btn">✦ Generate</button>
+        <button class="generate-btn">Generate</button>
       </div>`;
     scroll.querySelector(".generate-btn")!.addEventListener("click", () =>
       generateTree(currentTreeId!, name, false),

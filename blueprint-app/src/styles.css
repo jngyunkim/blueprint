@@ -1116,15 +1116,6 @@ button {
   margin: 0;
 }
 
-/* ---- Unified generate placeholder icon ---- */
-.generate-art {
-  font-size: 40px;
-  line-height: 1;
-  color: var(--accent);
-  opacity: 0.5;
-  margin-bottom: 8px;
-}
-
 /* ---- Design: forest (overview + trees) → tree drilldown ---- */
 .design-scroll {
   flex: 1;
