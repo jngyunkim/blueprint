@@ -1,15 +1,15 @@
 mod ask;
 mod cache;
 mod diagram;
+mod forest;
 mod glossary;
 mod imported;
-mod level;
 mod session;
 mod util;
 
 use ask::Turn;
 use diagram::DepStatus;
-use level::LevelResult;
+use forest::{Forest, Tree};
 use session::SessionMeta;
 
 const DEFAULT_MODEL: &str = "sonnet";
@@ -71,35 +71,33 @@ async fn check_deps() -> DepStatus {
         })
 }
 
-/// Cached result for ONE design level (null when not yet generated), so the UI
-/// can show a per-level Generate button without invoking Claude.
+/// Cached forest (overview + tree list) for a source, null when not generated.
 #[tauri::command]
-async fn cached_level(path: String, level: String, lang: Option<String>) -> Option<LevelResult> {
+async fn cached_forest(path: String, lang: Option<String>) -> Option<Forest> {
     let lang = lang_of(lang);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
-        cache::load(&format!("level-{level}-{lang}"), &path, mtime)
+        cache::load(&format!("forest-{lang}"), &path, mtime)
     })
     .await
     .ok()
     .flatten()
 }
 
-/// Generate ONE design level (prose + that level's diagrams + terms) in a single
-/// Claude call, caching it. `force` bypasses the cache to regenerate.
+/// Generate the forest (big-picture overview + the trees to explore) in one
+/// Claude call, caching it. `force` bypasses the cache.
 #[tauri::command]
-async fn generate_level(
+async fn generate_forest(
     path: String,
-    level: String,
     force: bool,
     model: Option<String>,
     lang: Option<String>,
-) -> Result<LevelResult, String> {
+) -> Result<Forest, String> {
     let model = resolve_model(model);
     let lang = lang_of(lang);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
-        let ns = format!("level-{level}-{lang}");
+        let ns = format!("forest-{lang}");
         if !force {
             if let Some(cached) = cache::load(&ns, &path, mtime) {
                 return Ok(cached);
@@ -109,9 +107,54 @@ async fn generate_level(
         if transcript.trim().is_empty() {
             return Err("This source has no readable text.".to_string());
         }
-        let result = level::generate(&transcript, &level, &model, &lang)?;
-        cache::save(&ns, &path, mtime, &result);
-        Ok(result)
+        let forest = forest::generate_forest(&transcript, &model, &lang)?;
+        cache::save(&ns, &path, mtime, &forest);
+        Ok(forest)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Cached detail for one tree (keyed by its id), null when not yet generated.
+#[tauri::command]
+async fn cached_tree(path: String, tree_id: String, lang: Option<String>) -> Option<Tree> {
+    let lang = lang_of(lang);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mtime = cache::mtime_of(&path);
+        cache::load(&format!("tree-{tree_id}-{lang}"), &path, mtime)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Generate the in-depth view of one tree (component/topic), caching it by id.
+#[tauri::command]
+async fn generate_tree(
+    path: String,
+    tree_id: String,
+    tree_name: String,
+    force: bool,
+    model: Option<String>,
+    lang: Option<String>,
+) -> Result<Tree, String> {
+    let model = resolve_model(model);
+    let lang = lang_of(lang);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mtime = cache::mtime_of(&path);
+        let ns = format!("tree-{tree_id}-{lang}");
+        if !force {
+            if let Some(cached) = cache::load(&ns, &path, mtime) {
+                return Ok(cached);
+            }
+        }
+        let transcript = source_transcript(&path)?;
+        if transcript.trim().is_empty() {
+            return Err("This source has no readable text.".to_string());
+        }
+        let tree = forest::generate_tree(&transcript, &tree_name, &model, &lang)?;
+        cache::save(&ns, &path, mtime, &tree);
+        Ok(tree)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -244,8 +287,10 @@ pub fn run() {
             list_sessions,
             get_transcript,
             check_deps,
-            cached_level,
-            generate_level,
+            cached_forest,
+            generate_forest,
+            cached_tree,
+            generate_tree,
             ask,
             fix_mermaid,
             cancel_generation,

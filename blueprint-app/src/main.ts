@@ -27,14 +27,17 @@ type Diagram = {
 
 type Term = { term: string; definition: string; category: string };
 
-/** One generated design level: prose + that level's diagrams + terms. */
-type LevelResult = {
-  level: string;
-  title: string;
-  content: string;
+/** A selectable component/topic to drill into. */
+type TreeRef = { id: string; name: string; blurb: string };
+/** The forest: big-picture overview + the trees to explore. */
+type Forest = {
+  overview: string;
   diagrams: Diagram[];
   terms: Term[];
+  trees: TreeRef[];
 };
+/** One explored tree: an in-depth look at a single component/topic. */
+type Tree = { name: string; content: string; diagrams: Diagram[]; terms: Term[] };
 
 type AskTurn = { role: "user" | "assistant"; content: string };
 
@@ -52,19 +55,12 @@ const isLinkSource = (s: SessionMeta) => s.path.endsWith(".links.json");
 type View = "design" | "ask" | "transcript";
 let currentView: View = "design";
 
-// The three design levels (stable key + display name).
-const LEVELS = [
-  { key: "high", name: "High-level" },
-  { key: "detailed", name: "Detailed" },
-  { key: "impl", name: "Implementation" },
-] as const;
-type LevelKey = (typeof LEVELS)[number]["key"];
-
-// In-memory per-level results for the selected source (null = not generated).
-let levelCache: Record<string, LevelResult | null> = {};
-let levelIndex = 0;
-// Which level key is mid-generation (empty when idle).
-let generatingLevel: LevelKey | null = null;
+// Design = forest (overview + tree list) → drill into one tree at a time.
+let forest: Forest | null = null;
+let treeCache: Record<string, Tree | null> = {}; // by tree id
+let currentTreeId: string | null = null; // null = forest view; else drilled into a tree
+// What's generating right now (so the panel can show a loading + Stop).
+let busy: { kind: "forest" } | { kind: "tree"; id: string } | null = null;
 
 // Ask tab conversation for the selected source.
 let askHistory: AskTurn[] = [];
@@ -262,9 +258,10 @@ async function selectSession(s: SessionMeta) {
   $("#tab-transcript").textContent = link ? "Source" : "Transcript";
 
   // Reset per-source state.
-  levelCache = {};
-  levelIndex = 0;
-  generatingLevel = null;
+  forest = null;
+  treeCache = {};
+  currentTreeId = null;
+  busy = null;
   askHistory = [];
   asking = false;
   switchView("design");
@@ -272,16 +269,21 @@ async function selectSession(s: SessionMeta) {
   renderAsk();
   transcriptView.textContent = "Loading transcript…";
 
-  // Prefetch cached levels (no Claude calls) so the selector can mark which are
-  // already generated, then render the Design tab.
-  const results = await Promise.all(
-    LEVELS.map((l) =>
-      invoke<LevelResult | null>("cached_level", { path: s.path, level: l.key, lang }),
-    ),
-  );
+  // Prefetch the cached forest (no Claude call); if present, also prefetch its
+  // cached trees so the picker can mark which are already generated.
+  const cachedForest = await invoke<Forest | null>("cached_forest", { path: s.path, lang });
   if (selected?.path !== s.path) return; // user switched away
-  LEVELS.forEach((l, i) => (levelCache[l.key] = results[i]));
-  renderDesign();
+  forest = cachedForest;
+  if (forest) {
+    const trees = await Promise.all(
+      forest.trees.map((t) =>
+        invoke<Tree | null>("cached_tree", { path: s.path, treeId: t.id, lang }),
+      ),
+    );
+    if (selected?.path !== s.path) return;
+    forest.trees.forEach((t, i) => (treeCache[t.id] = trees[i]));
+  }
+  renderDesignTab();
   updateGenerateButton();
 
   // Load the raw transcript/source lazily for the last tab.
@@ -401,146 +403,251 @@ function switchView(view: View) {
   updateGenerateButton();
 }
 
-/** Header Generate/Regenerate button acts on the CURRENT design level; only
- *  shown on the Design tab while idle. */
+/** Header Generate/Regenerate button: acts on the forest overview, or on the
+ *  current tree when drilled in. Only shown on the Design tab while idle. */
 function updateGenerateButton() {
   const btn = $<HTMLButtonElement>("#regen-btn");
-  if (!selected || currentView !== "design" || generatingLevel) {
+  if (!selected || currentView !== "design" || busy) {
     btn.classList.add("hidden");
     return;
   }
   btn.classList.remove("hidden");
-  const key = LEVELS[levelIndex].key;
-  btn.textContent = levelCache[key] ? "↻ Regenerate" : "✦ Generate";
-}
-
-// ---------- Design levels (per-level, on demand) ----------
-
-let levelLoadingStop: (() => void) | null = null;
-
-function renderDesign() {
-  designView.innerHTML = "";
-  const nav = document.createElement("div");
-  nav.className = "level-nav";
-  LEVELS.forEach((l, i) => {
-    const b = document.createElement("button");
-    b.className = `level-tab level-${i}` + (levelCache[l.key] ? " has-content" : "");
-    b.innerHTML = `<span class="level-num">${i + 1}</span> ${escapeHtml(l.name)}`;
-    b.addEventListener("click", () => {
-      levelIndex = i;
-      showLevel();
-      updateGenerateButton();
-    });
-    nav.appendChild(b);
-  });
-  const content = document.createElement("div");
-  content.className = "level-content";
-  designView.appendChild(nav);
-  designView.appendChild(content);
-  showLevel();
-}
-
-function showLevel() {
-  if (levelLoadingStop) {
-    levelLoadingStop();
-    levelLoadingStop = null;
+  if (currentTreeId === null) {
+    btn.textContent = forest ? "↻ Regenerate overview" : "✦ Generate overview";
+  } else {
+    btn.textContent = treeCache[currentTreeId] ? "↻ Regenerate" : "✦ Generate";
   }
-  const nav = designView.querySelector(".level-nav");
-  const content = designView.querySelector(".level-content") as HTMLElement | null;
-  if (!content) return;
-  nav?.querySelectorAll("button").forEach((b, i) =>
-    b.classList.toggle("active", i === levelIndex),
-  );
-  content.scrollTop = 0;
-
-  const l = LEVELS[levelIndex];
-  if (generatingLevel === l.key) {
-    content.innerHTML = "";
-    levelLoadingStop = renderLoading(content, `Generating the ${l.name} level…`);
-    const cancel = document.createElement("button");
-    cancel.className = "cancel-btn";
-    cancel.textContent = "✕ Stop";
-    cancel.addEventListener("click", cancelGeneration);
-    content.querySelector(".loading")?.appendChild(cancel);
-    return;
-  }
-  const res = levelCache[l.key];
-  if (!res) {
-    renderLevelPlaceholder(content, l);
-    return;
-  }
-  renderLevelContent(content, res);
 }
 
-function renderLevelPlaceholder(content: HTMLElement, l: { key: string; name: string }) {
-  content.innerHTML = `
-    <div class="generate-prompt">
-      <div class="generate-art">✦</div>
-      <p>The <b>${escapeHtml(l.name)}</b> level isn't generated yet.</p>
-      <button class="generate-btn">✦ Generate ${escapeHtml(l.name)}</button>
-      <p class="hint">Monet asks your local Claude Code to explain this level from
-        the document — with its diagrams inline and key terms you can hover for
-        definitions. Cached after the first run.</p>
-    </div>`;
-  content.querySelector(".generate-btn")!.addEventListener("click", () =>
-    generateLevel(l.key as LevelKey, false),
-  );
+// ---------- Design: forest (overview + trees) → tree drilldown ----------
+
+let designLoadingStop: (() => void) | null = null;
+
+function scrollPanel(): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "design-scroll";
+  return el;
 }
 
-async function renderLevelContent(content: HTMLElement, res: LevelResult) {
-  content.innerHTML = "";
+function addStop(scroll: HTMLElement) {
+  const cancel = document.createElement("button");
+  cancel.className = "cancel-btn";
+  cancel.textContent = "✕ Stop";
+  cancel.addEventListener("click", cancelGeneration);
+  scroll.querySelector(".loading")?.appendChild(cancel);
+}
+
+/** Append a markdown body (with hover terms + inline diagrams) into a panel. */
+async function appendRichContent(
+  scroll: HTMLElement,
+  title: string,
+  markdown: string,
+  terms: Term[],
+  diagrams: Diagram[],
+) {
   const inner = document.createElement("div");
   inner.className = "level-content-inner";
   inner.innerHTML =
-    `<h3 class="level-content-title">${escapeHtml(res.title)}</h3>` +
-    (marked.parse(res.content || "") as string);
-  annotateTerms(inner, res.terms || []);
+    `<h3 class="level-content-title">${escapeHtml(title)}</h3>` +
+    (marked.parse(markdown || "") as string);
+  annotateTerms(inner, terms || []);
 
   let wrap: HTMLElement | null = null;
-  if (res.diagrams && res.diagrams.length) {
+  if (diagrams && diagrams.length) {
     wrap = document.createElement("div");
     wrap.className = "level-diagrams";
     const h = document.createElement("h4");
     h.className = "level-diagrams-title";
-    h.textContent = res.diagrams.length > 1 ? "Diagrams for this level" : "Diagram for this level";
+    h.textContent = diagrams.length > 1 ? "Diagrams" : "Diagram";
     wrap.appendChild(h);
     inner.appendChild(wrap);
   }
-  content.appendChild(inner);
-  if (wrap) for (const d of res.diagrams) await appendDiagramCard(wrap, d);
+  scroll.appendChild(inner);
+  if (wrap) for (const d of diagrams) await appendDiagramCard(wrap, d);
 }
 
-async function generateLevel(key: LevelKey, force: boolean) {
-  if (!selected || generatingLevel) return;
+function renderDesignTab() {
+  if (designLoadingStop) {
+    designLoadingStop();
+    designLoadingStop = null;
+  }
+  designView.innerHTML = "";
+
+  if (busy?.kind === "forest") {
+    const scroll = scrollPanel();
+    designView.appendChild(scroll);
+    designLoadingStop = renderLoading(scroll, "Generating the overview…");
+    addStop(scroll);
+    return;
+  }
+  if (!forest) {
+    renderForestPlaceholder();
+    return;
+  }
+  if (currentTreeId === null) {
+    renderForestView();
+  } else {
+    renderTreeView();
+  }
+}
+
+function renderForestPlaceholder() {
+  const scroll = scrollPanel();
+  scroll.innerHTML = `
+    <div class="generate-prompt">
+      <div class="generate-art">✦</div>
+      <p>No overview generated for this source yet.</p>
+      <button class="generate-btn">✦ Generate overview</button>
+      <p class="hint">Monet gives you the big picture — the forest — then lists the
+        components worth exploring. Pick any one to drill into its details, with
+        inline diagrams and hover-over term definitions. Cached after the first run.</p>
+    </div>`;
+  scroll.querySelector(".generate-btn")!.addEventListener("click", () =>
+    generateForest(false),
+  );
+  designView.appendChild(scroll);
+}
+
+function renderForestView() {
+  if (!forest) return;
+  const scroll = scrollPanel();
+  designView.appendChild(scroll);
+  void appendRichContent(scroll, "Overview", forest.overview, forest.terms, forest.diagrams);
+
+  const section = document.createElement("div");
+  section.className = "tree-section";
+  section.innerHTML = `<h4 class="tree-section-title">Explore in depth</h4>`;
+  const grid = document.createElement("div");
+  grid.className = "tree-grid";
+  for (const t of forest.trees) {
+    const card = document.createElement("button");
+    card.className = "tree-card" + (treeCache[t.id] ? " has-content" : "");
+    card.innerHTML = `
+      <span class="tree-name">${escapeHtml(t.name)}</span>
+      <span class="tree-blurb">${escapeHtml(t.blurb || "")}</span>`;
+    card.addEventListener("click", () => openTree(t.id));
+    grid.appendChild(card);
+  }
+  section.appendChild(grid);
+  scroll.appendChild(section);
+}
+
+function renderTreeView() {
+  if (!forest || currentTreeId === null) return;
+  const tref = forest.trees.find((t) => t.id === currentTreeId);
+  const name = tref?.name ?? currentTreeId;
+
+  const bar = document.createElement("div");
+  bar.className = "tree-bar";
+  bar.innerHTML = `<button class="tree-back">← Forest</button>
+    <span class="tree-crumb">${escapeHtml(name)}</span>`;
+  bar.querySelector(".tree-back")!.addEventListener("click", backToForest);
+  designView.appendChild(bar);
+
+  const scroll = scrollPanel();
+  designView.appendChild(scroll);
+
+  if (busy?.kind === "tree" && busy.id === currentTreeId) {
+    designLoadingStop = renderLoading(scroll, `Exploring “${name}”…`);
+    addStop(scroll);
+    return;
+  }
+  const t = treeCache[currentTreeId];
+  if (!t) {
+    scroll.innerHTML = `
+      <div class="generate-prompt">
+        <div class="generate-art">✦</div>
+        <p><b>${escapeHtml(name)}</b> isn't generated yet.</p>
+        <button class="generate-btn">✦ Generate</button>
+      </div>`;
+    scroll.querySelector(".generate-btn")!.addEventListener("click", () =>
+      generateTree(currentTreeId!, name, false),
+    );
+    return;
+  }
+  void appendRichContent(scroll, t.name, t.content, t.terms, t.diagrams);
+}
+
+function openTree(id: string) {
+  currentTreeId = id;
+  if (treeCache[id]) {
+    renderDesignTab();
+    updateGenerateButton();
+    return;
+  }
+  const tref = forest?.trees.find((t) => t.id === id);
+  generateTree(id, tref?.name ?? id, false);
+}
+
+function backToForest() {
+  currentTreeId = null;
+  renderDesignTab();
+  updateGenerateButton();
+}
+
+async function generateForest(force: boolean) {
+  if (!selected || busy) return;
   const s = selected;
   setStatus("");
-  generatingLevel = key;
-  levelIndex = LEVELS.findIndex((l) => l.key === key);
-  showLevel();
+  busy = { kind: "forest" };
+  currentTreeId = null;
+  renderDesignTab();
   updateGenerateButton();
   try {
-    const res = await invoke<LevelResult>("generate_level", {
+    const f = await invoke<Forest>("generate_forest", { path: s.path, force, model, lang });
+    if (selected?.path !== s.path) {
+      busy = null;
+      return;
+    }
+    forest = f;
+    treeCache = {};
+    busy = null;
+    renderDesignTab();
+    updateGenerateButton();
+  } catch (e) {
+    if (selected?.path !== s.path) {
+      busy = null;
+      return;
+    }
+    busy = null;
+    renderDesignTab();
+    updateGenerateButton();
+    setStatus(String(e), "error");
+  }
+}
+
+async function generateTree(id: string, name: string, force: boolean) {
+  if (!selected || busy) return;
+  const s = selected;
+  setStatus("");
+  busy = { kind: "tree", id };
+  currentTreeId = id;
+  renderDesignTab();
+  updateGenerateButton();
+  try {
+    const t = await invoke<Tree>("generate_tree", {
       path: s.path,
-      level: key,
+      treeId: id,
+      treeName: name,
       force,
       model,
       lang,
     });
     if (selected?.path !== s.path) {
-      generatingLevel = null;
+      busy = null;
       return;
     }
-    levelCache[key] = res;
-    generatingLevel = null;
-    renderDesign(); // refresh nav "has-content" markers + show the level
+    treeCache[id] = t;
+    busy = null;
+    renderDesignTab();
     updateGenerateButton();
   } catch (e) {
     if (selected?.path !== s.path) {
-      generatingLevel = null;
+      busy = null;
       return;
     }
-    generatingLevel = null;
-    showLevel(); // back to placeholder
+    busy = null;
+    renderDesignTab();
     updateGenerateButton();
     setStatus(String(e), "error");
   }
@@ -820,10 +927,15 @@ async function importLink() {
 function wireUi() {
   filterInput.addEventListener("input", renderSessionList);
   $("#refresh-btn").addEventListener("click", refreshSessions);
-  // Shared Generate / Regenerate, acting on the current design level.
+  // Shared Generate / Regenerate, acting on the forest or the current tree.
   $("#regen-btn").addEventListener("click", () => {
-    const key = LEVELS[levelIndex].key;
-    generateLevel(key, !!levelCache[key]);
+    if (currentView !== "design") return;
+    if (currentTreeId === null) {
+      generateForest(!!forest);
+    } else {
+      const t = forest?.trees.find((x) => x.id === currentTreeId);
+      generateTree(currentTreeId, t?.name ?? currentTreeId, !!treeCache[currentTreeId]);
+    }
   });
   $("#update-btn").addEventListener("click", () => checkForUpdates(true));
 
