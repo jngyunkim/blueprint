@@ -41,6 +41,8 @@ type DepStatus = {
 
 let sessions: SessionMeta[] = [];
 let selected: SessionMeta | null = null;
+let sourceTab: "sessions" | "links" = "sessions";
+const isLinkSource = (s: SessionMeta) => s.path.endsWith(".links.json");
 type View = "diagrams" | "design" | "terms" | "transcript";
 let currentView: View = "diagrams";
 let hasDiagrams = false;
@@ -72,7 +74,7 @@ const sessionList = $("#session-list");
 const filterInput = $<HTMLInputElement>("#filter-input");
 const emptyState = $("#empty-state");
 const viewer = $("#viewer");
-const viewerTitle = $("#viewer-title");
+const titlebarTitle = $("#titlebar-title");
 const viewerSub = $("#viewer-sub");
 const statusBar = $("#status-bar");
 const diagramsView = $("#diagrams-view");
@@ -92,12 +94,14 @@ function fmtDate(epochSecs: number): string {
 
 function renderSessionList() {
   const q = filterInput.value.trim().toLowerCase();
-  const filtered = sessions.filter(
-    (s) =>
+  const filtered = sessions.filter((s) => {
+    if (sourceTab === "links" ? !isLinkSource(s) : isLinkSource(s)) return false;
+    return (
       !q ||
       s.title.toLowerCase().includes(q) ||
-      s.project.toLowerCase().includes(q),
-  );
+      s.project.toLowerCase().includes(q)
+    );
+  });
 
   // Group by project.
   const groups = new Map<string, SessionMeta[]>();
@@ -108,7 +112,10 @@ function renderSessionList() {
 
   sessionList.innerHTML = "";
   if (filtered.length === 0) {
-    sessionList.innerHTML = `<p class="muted">No sessions found.</p>`;
+    sessionList.innerHTML =
+      sourceTab === "links"
+        ? `<p class="muted">No imported links yet. Use “+ Import from link”.</p>`
+        : `<p class="muted">No sessions found.</p>`;
     return;
   }
 
@@ -188,6 +195,7 @@ function confirmDelete(item: HTMLElement, s: SessionMeta) {
       sessions = sessions.filter((x) => x.path !== s.path);
       if (selected?.path === s.path) {
         selected = null;
+        titlebarTitle.textContent = "Blueprint";
         viewer.classList.add("hidden");
         emptyState.classList.remove("hidden");
       }
@@ -228,7 +236,7 @@ async function selectSession(s: SessionMeta) {
   renderSessionList();
   emptyState.classList.add("hidden");
   viewer.classList.remove("hidden");
-  viewerTitle.textContent = s.title;
+  titlebarTitle.textContent = s.title;
   viewerSub.textContent = `${s.project} · ${fmtDate(s.modified)}`;
   $("#refresh-source-btn").classList.toggle("hidden", !s.path.endsWith(".links.json"));
   hasDiagrams = false;
@@ -714,6 +722,12 @@ async function importLink() {
     $("#import-modal").classList.add("hidden");
     $<HTMLTextAreaElement>("#import-url").value = "";
     $<HTMLInputElement>("#import-title").value = "";
+    // Switch to the Links tab so the new source is visible.
+    sourceTab = "links";
+    document
+      .querySelectorAll("#source-nav button")
+      .forEach((x) => x.classList.toggle("active", (x as HTMLElement).dataset.tab === "links"));
+    $("#import-link-btn").classList.remove("hidden");
     await refreshSessions();
     selectSession(meta);
   } catch (e) {
@@ -765,6 +779,18 @@ function wireUi() {
   $("#settings-close").addEventListener("click", () =>
     $("#settings-modal").classList.add("hidden"),
   );
+
+  // Source tabs (Sessions / Links)
+  document.querySelectorAll("#source-nav button").forEach((b) => {
+    b.addEventListener("click", () => {
+      sourceTab = (b as HTMLElement).dataset.tab as "sessions" | "links";
+      document
+        .querySelectorAll("#source-nav button")
+        .forEach((x) => x.classList.toggle("active", x === b));
+      $("#import-link-btn").classList.toggle("hidden", sourceTab !== "links");
+      renderSessionList();
+    });
+  });
 
   // Import-from-link modal
   $("#import-link-btn").addEventListener("click", () =>

@@ -10,21 +10,31 @@
 
   <body>
     <div id="app">
+      <div id="titlebar" data-tauri-drag-region>
+        <span id="titlebar-title" data-tauri-drag-region>Blueprint</span>
+      </div>
+
+      <div id="layout">
       <aside id="sidebar">
-        <header class="sidebar-header" data-tauri-drag-region>
+        <header class="sidebar-header">
           <div class="brand">
             <span class="brand-mark">✻</span>
             <h1>Blueprint</h1>
           </div>
-          <button id="refresh-btn" class="icon-btn" title="Reload session list">⟳</button>
+          <button id="refresh-btn" class="icon-btn" title="Reload sources">⟳</button>
         </header>
+
+        <div class="source-nav" id="source-nav">
+          <button data-tab="sessions" class="active">Sessions</button>
+          <button data-tab="links">Links</button>
+        </div>
 
         <div class="search">
           <span class="search-icon">⌕</span>
-          <input id="filter-input" placeholder="Filter sessions" />
+          <input id="filter-input" placeholder="Filter" />
         </div>
 
-        <button id="import-link-btn" class="notion-import">+ Import from link</button>
+        <button id="import-link-btn" class="notion-import hidden">+ Import from link</button>
 
         <div id="session-list"></div>
 
@@ -46,9 +56,8 @@
         </div>
 
         <section id="viewer" class="viewer hidden">
-          <header class="viewer-header" data-tauri-drag-region>
+          <header class="viewer-header">
             <div class="viewer-title">
-              <h2 id="viewer-title">—</h2>
               <span id="viewer-sub" class="viewer-sub"></span>
             </div>
             <div class="viewer-actions">
@@ -80,6 +89,7 @@
           <pre id="transcript-view" class="content-view transcript-view hidden"></pre>
         </section>
       </main>
+      </div>
     </div>
 
     <div id="lightbox" class="lightbox hidden">
