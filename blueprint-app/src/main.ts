@@ -491,23 +491,39 @@ function renderDesign(doc: DesignDoc) {
     designView.innerHTML = `<p class="muted">No design levels were produced.</p>`;
     return;
   }
+
+  // One level at a time: a fixed level selector + a single scrolling panel.
+  const nav = document.createElement("div");
+  nav.className = "level-nav";
+  const content = document.createElement("div");
+  content.className = "level-content";
+
+  const show = (i: number) => {
+    nav.querySelectorAll("button").forEach((b, idx) =>
+      b.classList.toggle("active", idx === i),
+    );
+    const lvl = doc.levels[i];
+    const inner = document.createElement("div");
+    inner.className = "level-content-inner";
+    inner.innerHTML =
+      `<h3 class="level-content-title">${escapeHtml(lvl.title)}</h3>` +
+      (marked.parse(lvl.content || "") as string);
+    content.innerHTML = "";
+    content.appendChild(inner);
+    content.scrollTop = 0;
+  };
+
   doc.levels.forEach((lvl, i) => {
-    const card = document.createElement("section");
-    card.className = "level-card" + (i === 0 ? " open" : "");
-    const header = document.createElement("button");
-    header.className = "level-head";
-    header.innerHTML = `
-      <span class="level-badge level-${i}">${escapeHtml(lvl.level)}</span>
-      <span class="level-title">${escapeHtml(lvl.title)}</span>
-      <span class="level-caret">▾</span>`;
-    const bodyEl = document.createElement("div");
-    bodyEl.className = "level-body";
-    bodyEl.innerHTML = marked.parse(lvl.content || "") as string;
-    header.addEventListener("click", () => card.classList.toggle("open"));
-    card.appendChild(header);
-    card.appendChild(bodyEl);
-    designView.appendChild(card);
+    const b = document.createElement("button");
+    b.className = `level-tab level-${i}`;
+    b.innerHTML = `<span class="level-num">${i + 1}</span> ${escapeHtml(lvl.level)}`;
+    b.addEventListener("click", () => show(i));
+    nav.appendChild(b);
   });
+
+  designView.appendChild(nav);
+  designView.appendChild(content);
+  show(0);
 }
 
 // ---------- Glossary (Terms) ----------

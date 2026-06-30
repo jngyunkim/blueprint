@@ -885,92 +885,104 @@ button {
   box-shadow: var(--shadow);
 }
 
-/* ---- Design levels accordion ---- */
+/* ---- Design levels: one at a time (fixed nav + scrolling panel) ---- */
 .design-view {
+  /* overrides .content-view: the inner .level-content scrolls, not this */
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-.level-card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  gap: 0;
+  padding: 0;
   overflow: hidden;
 }
-.level-head {
+.level-nav {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  background: none;
-  border: none;
-  padding: 14px 18px;
-  cursor: pointer;
-  text-align: left;
-  color: var(--text);
-}
-.level-badge {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 3px 9px;
-  border-radius: 20px;
-  color: white;
+  gap: 8px;
+  padding: 16px 22px 14px;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.level-badge.level-0 {
+.level-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.level-tab:hover {
+  color: var(--text);
+}
+.level-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  color: white;
+  background: var(--muted);
+}
+.level-tab.level-0 .level-num {
   background: #5b8def;
 }
-.level-badge.level-1 {
+.level-tab.level-1 .level-num {
   background: var(--accent);
 }
-.level-badge.level-2 {
+.level-tab.level-2 .level-num {
   background: #8a7a52;
 }
-.level-title {
-  font-size: 14px;
-  font-weight: 600;
+.level-tab.active {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: var(--shadow);
+}
+.level-content {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 22px 32px;
 }
-.level-caret {
-  color: var(--muted);
-  transition: transform 0.18s;
-}
-.level-card.open .level-caret {
-  transform: rotate(180deg);
-}
-.level-body {
-  display: none;
-  padding: 0 20px 18px;
-  border-top: 1px solid var(--border);
+.level-content-inner {
+  max-width: 780px;
   font-size: 13.5px;
-  line-height: 1.6;
+  line-height: 1.65;
   color: var(--text-2);
 }
-.level-card.open .level-body {
-  display: block;
+.level-content-title {
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0 0 12px;
 }
-.level-body h1,
-.level-body h2,
-.level-body h3 {
+.level-content-inner h1,
+.level-content-inner h2,
+.level-content-inner h3 {
   font-size: 14px;
   color: var(--text);
-  margin: 14px 0 6px;
+  margin: 16px 0 6px;
 }
-.level-body p {
+.level-content-inner p {
   margin: 8px 0;
 }
-.level-body ul,
-.level-body ol {
+.level-content-inner ul,
+.level-content-inner ol {
   padding-left: 20px;
   margin: 8px 0;
 }
-.level-body li {
+.level-content-inner li {
   margin: 3px 0;
 }
-.level-body code {
+.level-content-inner code {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -978,17 +990,28 @@ button {
   font-size: 12px;
   font-family: "SF Mono", ui-monospace, monospace;
 }
-.level-body pre {
+.level-content-inner pre {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 9px;
   padding: 12px;
   overflow-x: auto;
 }
-.level-body pre code {
+.level-content-inner pre code {
   border: none;
   padding: 0;
   background: none;
+}
+.level-content-inner table {
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 12.5px;
+}
+.level-content-inner th,
+.level-content-inner td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
 }
 
 .hidden {
