@@ -12,17 +12,16 @@ pub struct Diagram {
     pub source: String,
     #[serde(default)]
     pub explanation: String,
+    /// Which design level this diagram illustrates: "High-level" | "Detailed"
+    /// | "Implementation". Lets the Design tab show diagrams inline per level.
+    #[serde(default)]
+    pub level: String,
     /// Rendered HTML for mingrammer diagrams (inline <svg> or <img>). Empty for mermaid.
     #[serde(default)]
     pub rendered: String,
     /// When set, the diagram could not be rendered; holds a human-readable reason.
     #[serde(default)]
     pub unavailable: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct DiagramSet {
-    pub diagrams: Vec<Diagram>,
 }
 
 #[derive(Serialize, Clone)]
@@ -33,22 +32,17 @@ pub struct DepStatus {
     pub diagrams_pkg: bool,
 }
 
-const MAX_TRANSCRIPT_CHARS: usize = 400_000;
-
-const PROMPT: &str = r#"You are a software-architecture visualizer. Read the following Claude Code design/architecture conversation and produce 1 to 3 diagrams that best help a reader UNDERSTAND the architecture and key design decisions discussed. Focus on structure, data flow, components, and important decisions — not on chit-chat.
-
-Rules:
-- Prefer `mermaid` for component relationships, flows, sequences, state machines, and entity relationships.
-- Use `mingrammer` (the Python `diagrams` library) ONLY when the design is genuinely about cloud/infrastructure topology (services, queues, databases, load balancers, cloud providers). For mingrammer, the Python code MUST construct the diagram with `show=False`, `outformat="svg"`, and `filename="diagram"` (exactly that filename, no path, no extension). Import only from the `diagrams` package.
-- Each diagram needs a short `title`, the `source`, and a 1-2 sentence `explanation` of what it shows.
-- Keep mermaid syntactically valid. Do not wrap node labels in problematic characters.
-
-Output ONLY a single JSON object, with NO markdown code fences and NO prose before or after, exactly matching this shape:
-{"diagrams":[{"title":"string","kind":"mermaid","source":"string","explanation":"string"}]}
-
-Here is the conversation transcript:
-
-"#;
+/// Render every mingrammer diagram in place (mermaid is rendered in the webview).
+pub fn render_diagrams(diagrams: &mut [Diagram]) {
+    for d in diagrams.iter_mut() {
+        if d.kind == "mingrammer" {
+            match render_mingrammer(&d.source) {
+                Ok(html) => d.rendered = html,
+                Err(reason) => d.unavailable = Some(reason),
+            }
+        }
+    }
+}
 
 pub fn check_deps() -> DepStatus {
     let python = find_bin("python3");
@@ -69,20 +63,6 @@ pub fn check_deps() -> DepStatus {
         graphviz: find_bin("dot").is_some(),
         diagrams_pkg,
     }
-}
-
-/// Build the full prompt (instructions + transcript), truncating very large
-/// transcripts from the front so the most recent design discussion is kept.
-fn build_prompt(transcript: &str, lang: &str) -> String {
-    let body = if transcript.len() > MAX_TRANSCRIPT_CHARS {
-        format!(
-            "[...transcript truncated...]\n{}",
-            crate::util::tail_chars(transcript, MAX_TRANSCRIPT_CHARS)
-        )
-    } else {
-        transcript.to_string()
-    };
-    format!("{PROMPT}{body}{}", crate::util::lang_clause(lang))
 }
 
 /// Invoke the local Claude Code CLI in headless mode, piping the prompt via
@@ -137,48 +117,6 @@ pub fn run_claude(prompt: &str, model: &str) -> Result<String, String> {
         .and_then(|x| x.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| "claude output had no 'result' field".to_string())
-}
-
-/// Extract the JSON object from a model response that may contain stray fences
-/// or prose, then deserialize it into a DiagramSet.
-fn parse_diagrams(raw: &str) -> Result<DiagramSet, String> {
-    let trimmed = raw.trim();
-    let inner = match (trimmed.find('{'), trimmed.rfind('}')) {
-        (Some(a), Some(b)) if b >= a => &trimmed[a..=b],
-        _ => return Err("no JSON object found in model output".to_string()),
-    };
-    serde_json::from_str::<DiagramSet>(inner)
-        .map_err(|e| format!("could not parse diagram JSON: {e}"))
-}
-
-/// Full generation pipeline: transcript -> claude -> parse -> render mingrammer.
-pub fn generate(transcript: &str, model: &str, lang: &str) -> Result<DiagramSet, String> {
-    let prompt = build_prompt(transcript, lang);
-    // One retry on parse failure (models occasionally add stray prose).
-    let mut last_err = String::new();
-    for attempt in 0..2 {
-        let result = run_claude(&prompt, model)?;
-        match parse_diagrams(&result) {
-            Ok(mut set) => {
-                for d in set.diagrams.iter_mut() {
-                    if d.kind == "mingrammer" {
-                        match render_mingrammer(&d.source) {
-                            Ok(html) => d.rendered = html,
-                            Err(reason) => d.unavailable = Some(reason),
-                        }
-                    }
-                }
-                return Ok(set);
-            }
-            Err(e) => {
-                last_err = e;
-                if attempt == 0 {
-                    continue;
-                }
-            }
-        }
-    }
-    Err(last_err)
 }
 
 /// Run mingrammer/diagrams Python code in a temp dir and return rendered HTML.
@@ -288,21 +226,6 @@ fn base64_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_clean_json() {
-        let raw = r#"{"diagrams":[{"title":"T","kind":"mermaid","source":"graph TD; A-->B","explanation":"x"}]}"#;
-        let set = parse_diagrams(raw).unwrap();
-        assert_eq!(set.diagrams.len(), 1);
-        assert_eq!(set.diagrams[0].kind, "mermaid");
-    }
-
-    #[test]
-    fn parses_json_with_fences_and_prose() {
-        let raw = "Here you go:\n```json\n{\"diagrams\":[{\"title\":\"T\",\"kind\":\"mermaid\",\"source\":\"graph TD; A-->B\",\"explanation\":\"x\"}]}\n```\nDone.";
-        let set = parse_diagrams(raw).unwrap();
-        assert_eq!(set.diagrams.len(), 1);
-    }
 
     #[test]
     fn base64_matches_known_vector() {

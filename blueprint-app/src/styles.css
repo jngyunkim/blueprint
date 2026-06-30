@@ -9,9 +9,9 @@
   --text: #1a1a18;
   --text-2: #605e57;
   --muted: #9d9b92;
-  --accent: #c45c3f;
-  --accent-2: #d97757;
-  --accent-soft: #f4ece7;
+  --accent: #346bea;
+  --accent-2: #5b86f0;
+  --accent-soft: #e9eefc;
   --ok: #2a8c5a;
   --error: #b3402f;
   --error-bg: #f7e9e4;
@@ -36,9 +36,9 @@
     --text: #f5f4ee;
     --text-2: #c4c2b8;
     --muted: #908e84;
-    --accent: #d97757;
-    --accent-2: #e3906f;
-    --accent-soft: #3a2d27;
+    --accent: #5b86f0;
+    --accent-2: #7ea2f4;
+    --accent-soft: #1d2944;
     --ok: #4cba7e;
     --error: #f0907f;
     --error-bg: #3a2521;
@@ -990,14 +990,15 @@ button {
   color: white;
   background: var(--muted);
 }
+/* Three distinct level hues, shared by the level selector and diagram badges. */
 .level-tab.level-0 .level-num {
-  background: #5b8def;
+  background: #346bea; /* High-level — blue */
 }
 .level-tab.level-1 .level-num {
-  background: var(--accent);
+  background: #2a8c5a; /* Detailed — green */
 }
 .level-tab.level-2 .level-num {
-  background: #8a7a52;
+  background: #c0772a; /* Implementation — amber */
 }
 .level-tab.active {
   background: var(--panel);
@@ -1072,6 +1073,56 @@ button {
   border: 1px solid var(--border);
   padding: 6px 10px;
   text-align: left;
+}
+
+/* ---- Diagram level badge (Diagrams gallery) ---- */
+.level-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 9px;
+  margin-right: 8px;
+  vertical-align: middle;
+  color: #fff;
+}
+.level-badge.lvl-high {
+  background: #346bea;
+}
+.level-badge.lvl-detailed {
+  background: #2a8c5a;
+}
+.level-badge.lvl-impl {
+  background: #c0772a;
+}
+
+/* ---- Inline diagrams inside a Design level ---- */
+.level-diagrams {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.level-diagrams-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* ---- Unified generate placeholder icon ---- */
+.generate-art {
+  font-size: 40px;
+  line-height: 1;
+  color: var(--accent);
+  opacity: 0.5;
+  margin-bottom: 8px;
 }
 
 .hidden {

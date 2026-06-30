@@ -1,3 +1,4 @@
+mod bundle;
 mod cache;
 mod design;
 mod diagram;
@@ -6,9 +7,8 @@ mod imported;
 mod session;
 mod util;
 
-use design::DesignDoc;
-use diagram::{DepStatus, DiagramSet};
-use glossary::GlossarySet;
+use bundle::Bundle;
+use diagram::DepStatus;
 use session::SessionMeta;
 
 const DEFAULT_MODEL: &str = "sonnet";
@@ -70,32 +70,35 @@ async fn check_deps() -> DepStatus {
         })
 }
 
-/// Return cached diagrams for a session without invoking Claude. Returns null
-/// when nothing is cached, so the UI can show an explicit "Generate" button.
+/// Return the cached bundle (design levels + diagrams + terms) for a source
+/// without invoking Claude. Returns null when nothing is cached, so the UI can
+/// show an explicit "Generate" button.
 #[tauri::command]
-async fn cached_diagrams(path: String, lang: Option<String>) -> Option<DiagramSet> {
+async fn cached_bundle(path: String, lang: Option<String>) -> Option<Bundle> {
     let lang = lang_of(lang);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
-        cache::load(&format!("diagrams-{lang}"), &path, mtime)
+        cache::load(&format!("bundle-{lang}"), &path, mtime)
     })
     .await
     .ok()
     .flatten()
 }
 
+/// Generate the full bundle in a single Claude call (one read of the source),
+/// caching the result. `force` bypasses the cache to regenerate.
 #[tauri::command]
-async fn generate_diagrams(
+async fn generate_bundle(
     path: String,
     force: bool,
     model: Option<String>,
     lang: Option<String>,
-) -> Result<DiagramSet, String> {
+) -> Result<Bundle, String> {
     let model = resolve_model(model);
     let lang = lang_of(lang);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
-        let ns = format!("diagrams-{lang}");
+        let ns = format!("bundle-{lang}");
         if !force {
             if let Some(cached) = cache::load(&ns, &path, mtime) {
                 return Ok(cached);
@@ -105,93 +108,9 @@ async fn generate_diagrams(
         if transcript.trim().is_empty() {
             return Err("This source has no readable text.".to_string());
         }
-        let set = diagram::generate(&transcript, &model, &lang)?;
-        cache::save(&ns, &path, mtime, &set);
-        Ok(set)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// Cached glossary for a session without invoking Claude (null when none).
-#[tauri::command]
-async fn cached_glossary(path: String, lang: Option<String>) -> Option<GlossarySet> {
-    let lang = lang_of(lang);
-    tauri::async_runtime::spawn_blocking(move || {
-        let mtime = cache::mtime_of(&path);
-        cache::load(&format!("glossary-{lang}"), &path, mtime)
-    })
-    .await
-    .ok()
-    .flatten()
-}
-
-#[tauri::command]
-async fn generate_glossary(
-    path: String,
-    force: bool,
-    model: Option<String>,
-    lang: Option<String>,
-) -> Result<GlossarySet, String> {
-    let model = resolve_model(model);
-    let lang = lang_of(lang);
-    tauri::async_runtime::spawn_blocking(move || {
-        let mtime = cache::mtime_of(&path);
-        let ns = format!("glossary-{lang}");
-        if !force {
-            if let Some(cached) = cache::load(&ns, &path, mtime) {
-                return Ok(cached);
-            }
-        }
-        let transcript = source_transcript(&path)?;
-        if transcript.trim().is_empty() {
-            return Err("This source has no readable text.".to_string());
-        }
-        let set = glossary::generate(&transcript, &model, &lang)?;
-        cache::save(&ns, &path, mtime, &set);
-        Ok(set)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// Cached design levels for a source without invoking Claude (null when none).
-#[tauri::command]
-async fn cached_design(path: String, lang: Option<String>) -> Option<DesignDoc> {
-    let lang = lang_of(lang);
-    tauri::async_runtime::spawn_blocking(move || {
-        let mtime = cache::mtime_of(&path);
-        cache::load(&format!("design-{lang}"), &path, mtime)
-    })
-    .await
-    .ok()
-    .flatten()
-}
-
-#[tauri::command]
-async fn generate_design(
-    path: String,
-    force: bool,
-    model: Option<String>,
-    lang: Option<String>,
-) -> Result<DesignDoc, String> {
-    let model = resolve_model(model);
-    let lang = lang_of(lang);
-    tauri::async_runtime::spawn_blocking(move || {
-        let mtime = cache::mtime_of(&path);
-        let ns = format!("design-{lang}");
-        if !force {
-            if let Some(cached) = cache::load(&ns, &path, mtime) {
-                return Ok(cached);
-            }
-        }
-        let transcript = source_transcript(&path)?;
-        if transcript.trim().is_empty() {
-            return Err("This source has no readable text.".to_string());
-        }
-        let doc = design::generate(&transcript, &model, &lang)?;
-        cache::save(&ns, &path, mtime, &doc);
-        Ok(doc)
+        let bundle = bundle::generate(&transcript, &model, &lang)?;
+        cache::save(&ns, &path, mtime, &bundle);
+        Ok(bundle)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -286,12 +205,8 @@ pub fn run() {
             list_sessions,
             get_transcript,
             check_deps,
-            cached_diagrams,
-            generate_diagrams,
-            cached_glossary,
-            generate_glossary,
-            cached_design,
-            generate_design,
+            cached_bundle,
+            generate_bundle,
             import_link,
             refresh_source,
             delete_session

@@ -1,11 +1,18 @@
-# Blueprint
+# Monet
 
-Visualize Claude Code design/architecture sessions as diagrams.
+Turn Claude Code design/architecture sessions — and external design docs — into
+diagrams, a layered design walkthrough, and a contextual glossary.
 
-Pick a past Claude Code session and Blueprint asks your **local** Claude Code
-CLI (`claude -p`, headless) to turn the design discussion into diagrams —
-`mermaid` for flows/sequences/relationships, and `mingrammer/diagrams` for
-cloud/infra topology when appropriate.
+Pick a source and Monet asks your **local** Claude Code CLI (`claude -p`,
+headless) to read it **once** and produce, in a single pass:
+
+- **Diagrams** — `mermaid` for flows/sequences/relationships, plus
+  `mingrammer/diagrams` for cloud/infra topology when appropriate.
+- **Design** — the document split into **High-level → Detailed →
+  Implementation**, viewed one level at a time, strictly grounded in what the
+  document actually says (it won't invent specifics).
+- **Terms** — a glossary of the technical terms, defined in this document's
+  context.
 
 No API keys: it reuses your existing Claude Code authentication.
 
@@ -14,12 +21,18 @@ No API keys: it reuses your existing Claude Code authentication.
 ```
 Tauri app
   webview (UI)  <-- IPC -->  Rust backend
-   · session list             · scan ~/.claude/projects, parse JSONL
-   · mermaid rendering         · extract clean transcript (drops tool noise)
-   · infra SVG display         · claude -p  (diagram generation)
+   · source list              · scan ~/.claude/projects, parse JSONL
+   · mermaid rendering         · resolve source text (session JSONL, or
+   · infra SVG display           link sources fetched via gh / Notion connector)
+   · one-at-a-time design      · claude -p  → ONE JSON bundle
    · transcript / source       · python3 + graphviz (mingrammer render)
-                               · disk cache (keyed by session path + mtime)
+                               · disk cache (keyed by source path + mtime + lang)
 ```
+
+A **single** `claude -p` call returns one JSON bundle (`levels` + `diagrams` +
+`terms`), so a large source is read only once and the three tabs stay mutually
+consistent. Each diagram is tagged with the design level it illustrates, and the
+Design tab shows those diagrams inline beneath the matching level.
 
 ## Requirements
 
@@ -45,41 +58,48 @@ npm run tauri build
 ## Sources
 
 - **Claude Code sessions** — scanned from `~/.claude/projects/*.jsonl`.
-- **Notion pages** — "Import from Notion" with a page URL. Fetched via the
-  Notion REST API using a token saved in Settings (stored locally in the OS
-  config dir, never in the repo). Saved as a local `.md` source, after which the
-  same pipeline applies.
+- **Links** — "Import from link" with one or more GitHub and/or Notion URLs
+  (they can be mixed). Monet asks your local Claude Code to fetch them at
+  generation time — GitHub via the `gh` CLI, Notion via the Claude Notion MCP
+  connector. **No API keys.** The fetched content is viewable in the **Source**
+  tab and cached as a local `.fetched.md`.
 
 ## Tabs
 
-- **Diagrams** — mermaid (+ optional mingrammer infra), expand-to-lightbox.
-- **Design** — the document broken into **High-level → Detailed →
-  Implementation**, strictly grounded in the document (won't invent specifics).
+- **Diagrams** — gallery of mermaid (+ optional mingrammer infra) diagrams, each
+  with a level badge; expand any diagram to a lightbox.
+- **Design** — High-level → Detailed → Implementation, one level at a time, with
+  that level's diagrams inline.
 - **Terms** — contextual technical glossary.
-- **Transcript** — the extracted source text.
+- **Transcript / Source** — the extracted session transcript, or (for link
+  sources) the fetched source content.
 
-Each generated artifact has an explicit Generate button and is cached by source
-path + mtime, namespaced per kind **and language**.
+One **Generate** button (in the header and in each empty tab) produces all three
+at once; once a bundle is cached it becomes **Regenerate**. Results are cached by
+source path + mtime, namespaced per language.
 
 ## Settings
 
 - **Language** (English / 한국어) — language of generated natural-language text.
-- **Notion token** — for importing Notion pages.
 - **Model** (header): Fast = Haiku, Balanced = Sonnet, Best = Opus.
 
 ## Layout
 
 - `src-tauri/src/session.rs` — scan + JSONL parse + transcript extraction
-- `src-tauri/src/notion.rs` — Notion URL parsing + REST fetch → markdown source
-- `src-tauri/src/diagram.rs` — claude invocation, JSON parse, mingrammer render
-- `src-tauri/src/glossary.rs` / `design.rs` — glossary + layered design generation
+- `src-tauri/src/imported.rs` — link sources: `.links.json` manifests, dynamic
+  fetch (gh / Notion connector) → cached `.fetched.md`
+- `src-tauri/src/bundle.rs` — the single combined generation (levels + diagrams
+  + terms): prompt, parse, mingrammer render
+- `src-tauri/src/diagram.rs` — `claude` invocation, mingrammer render, dep check
+- `src-tauri/src/design.rs` / `glossary.rs` — the `Level` / `Term` types
 - `src-tauri/src/cache.rs` — artifact cache (namespace + path + mtime key)
-- `src-tauri/src/config.rs` — local settings (Notion token)
+- `src-tauri/src/util.rs` — binary discovery, isolated work dir, language clause
 - `src/main.ts` — UI
 
 Generation uses a stripped headless `claude` (`--strict-mcp-config`,
 `--setting-sources ""`, strict-JSON system prompt) for speed and reliable
-parsing. Default model is `sonnet` (`DEFAULT_MODEL` in `lib.rs`).
+parsing. Default model is `sonnet` (`DEFAULT_MODEL` in `lib.rs`). Spawned
+`claude` runs in an isolated work dir to avoid macOS privacy prompts.
 
 ## Releases & in-app updates
 
@@ -90,7 +110,7 @@ To cut a release:
 
 ```bash
 # bump version in src-tauri/tauri.conf.json + package.json, then:
-git tag v0.1.1 && git push origin v0.1.1
+git tag v0.1.13 && git push origin v0.1.13
 ```
 
 The `.github/workflows/release.yml` workflow builds on a macOS runner, signs the
@@ -101,4 +121,3 @@ or via "Check for updates".
 
 > The signing key lives at `~/.tauri/blueprint_updater.key` (keep it safe — it
 > is **not** in the repo). The matching public key is in `tauri.conf.json`.
-
