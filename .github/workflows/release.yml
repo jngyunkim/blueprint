@@ -37,10 +37,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code signing with a stable (self-signed) identity so the
+          # in-app updater can replace + relaunch the bundle. tauri-action
+          # imports APPLE_CERTIFICATE into a temporary keychain. No APPLE_ID is
+          # set, so notarization is skipped (self-signed can't be notarized).
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         with:
           projectPath: blueprint-app
           tagName: ${{ github.ref_name }}
-          releaseName: "Blueprint ${{ github.ref_name }}"
+          releaseName: "Monet ${{ github.ref_name }}"
           releaseBody: "Download the .dmg to install. Existing installs update in-app."
           releaseDraft: false
           prerelease: false
