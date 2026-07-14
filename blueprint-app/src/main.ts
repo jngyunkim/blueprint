@@ -76,8 +76,6 @@ let busy: { kind: "forest" } | { kind: "tree"; id: string } | null = null;
 let askHistory: AskTurn[] = [];
 let asking = false;
 
-const collapsedGroups = new Set<string>();
-
 type Lang = "en" | "ko";
 const savedLang = localStorage.getItem("bp-lang");
 let lang: Lang = savedLang === "ko" ? "ko" : "en";
@@ -128,69 +126,45 @@ function renderSessionList() {
     );
   });
 
-  // Group by project.
-  const groups = new Map<string, SessionMeta[]>();
-  for (const s of filtered) {
-    if (!groups.has(s.project)) groups.set(s.project, []);
-    groups.get(s.project)!.push(s);
-  }
-
   sessionList.innerHTML = "";
+
+  const label = document.createElement("div");
+  label.className = "recents-label";
+  label.textContent = sourceTab === "links" ? "Links" : "Recents";
+  sessionList.appendChild(label);
+
   if (filtered.length === 0) {
-    sessionList.innerHTML =
-      sourceTab === "links"
-        ? `<p class="muted">No imported links yet. Use “+ Import from link”.</p>`
-        : `<p class="muted">No sessions found.</p>`;
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent =
+      sourceTab === "links" ? "No imported links yet." : "No sessions found.";
+    sessionList.appendChild(empty);
     return;
   }
 
-  for (const [project, items] of groups) {
-    const collapsed = collapsedGroups.has(project);
-    const groupEl = document.createElement("div");
-    groupEl.className = "session-group" + (collapsed ? " collapsed" : "");
+  // Flat, Claude-style list: title only, active row gets a dot + highlight.
+  for (const s of filtered) {
+    const item = document.createElement("div");
+    item.className = "session-item" + (selected?.path === s.path ? " active" : "");
 
-    const label = document.createElement("button");
-    label.className = "group-label";
-    label.innerHTML = `
-      <span class="group-caret">▼</span>
-      <span>${escapeHtml(project)}</span>
-      <span class="group-count">${items.length}</span>`;
-    label.addEventListener("click", () => {
-      if (collapsedGroups.has(project)) collapsedGroups.delete(project);
-      else collapsedGroups.add(project);
-      renderSessionList();
+    const open = document.createElement("button");
+    open.className = "session-open";
+    open.title = `${s.project} · ${fmtDate(s.modified)} · ${s.message_count} msgs`;
+    open.innerHTML = `<span class="session-dot"></span><span class="session-title">${escapeHtml(s.title)}</span>`;
+    open.addEventListener("click", () => selectSession(s));
+
+    const del = document.createElement("button");
+    del.className = "session-del";
+    del.title = "Move to Trash";
+    del.textContent = "✕";
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      confirmDelete(item, s);
     });
-    groupEl.appendChild(label);
 
-    const itemsEl = document.createElement("div");
-    itemsEl.className = "group-items";
-    for (const s of items) {
-      const item = document.createElement("div");
-      item.className =
-        "session-item" + (selected?.path === s.path ? " active" : "");
-
-      const open = document.createElement("button");
-      open.className = "session-open";
-      open.innerHTML = `
-        <span class="session-title">${escapeHtml(s.title)}</span>
-        <span class="session-meta">${fmtDate(s.modified)} · ${s.message_count} msgs</span>`;
-      open.addEventListener("click", () => selectSession(s));
-
-      const del = document.createElement("button");
-      del.className = "session-del";
-      del.title = "Move session to Trash";
-      del.textContent = "✕";
-      del.addEventListener("click", (e) => {
-        e.stopPropagation();
-        confirmDelete(item, s);
-      });
-
-      item.appendChild(open);
-      item.appendChild(del);
-      itemsEl.appendChild(item);
-    }
-    groupEl.appendChild(itemsEl);
-    sessionList.appendChild(groupEl);
+    item.appendChild(open);
+    item.appendChild(del);
+    sessionList.appendChild(item);
   }
 }
 
