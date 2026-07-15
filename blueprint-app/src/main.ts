@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import mermaid from "mermaid";
@@ -82,9 +83,9 @@ let lang: Lang = savedLang === "ko" ? "ko" : "en";
 
 type Model = "haiku" | "sonnet" | "opus";
 const MODEL_LABELS: Record<Model, string> = {
-  haiku: "Fast",
-  sonnet: "Balanced",
-  opus: "Best",
+  haiku: "Haiku 4.5",
+  sonnet: "Sonnet 5",
+  opus: "Opus 4.8",
 };
 const savedModel = localStorage.getItem("bp-model");
 let model: Model =
@@ -1065,4 +1066,10 @@ window.addEventListener("DOMContentLoaded", () => {
   refreshSessions();
   refreshDeps();
   checkForUpdates(false);
+  // Show the current version on the update button's hover tooltip.
+  getVersion()
+    .then((v) => {
+      $<HTMLButtonElement>("#update-btn").title = `Monet v${v}`;
+    })
+    .catch(() => {});
 });

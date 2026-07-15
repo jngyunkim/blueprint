@@ -20,8 +20,14 @@
         </header>
 
         <div class="source-nav" id="source-nav">
-          <button data-tab="sessions" class="active">Sessions</button>
-          <button data-tab="links">Links</button>
+          <button data-tab="sessions" class="active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Sessions</span>
+          </button>
+          <button data-tab="links">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            <span>Links</span>
+          </button>
         </div>
 
         <div class="search">
@@ -61,11 +67,11 @@
               <div
                 class="model-select"
                 id="model-select"
-                title="Generation model — Fast is ~2× quicker, Best is highest quality"
+                title="Generation model — Haiku is fastest, Opus is highest quality, Sonnet 5 is the balanced default"
               >
-                <button data-model="haiku">Fast</button>
-                <button data-model="sonnet">Balanced</button>
-                <button data-model="opus">Best</button>
+                <button data-model="haiku">Haiku 4.5</button>
+                <button data-model="sonnet">Sonnet 5</button>
+                <button data-model="opus">Opus 4.8</button>
               </div>
               <button id="refresh-source-btn" class="ghost-btn secondary hidden" title="Re-fetch this link's latest content">⟳ Refresh</button>
               <button id="regen-btn" class="ghost-btn hidden" title="Generate or regenerate the overview / tree">Generate</button>

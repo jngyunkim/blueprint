@@ -12,8 +12,6 @@ use diagram::DepStatus;
 use forest::{Forest, Tree};
 use session::SessionMeta;
 
-const DEFAULT_MODEL: &str = "sonnet";
-
 fn lang_of(lang: Option<String>) -> String {
     match lang.as_deref() {
         Some("ko") => "ko".to_string(),
@@ -31,12 +29,13 @@ fn source_transcript(path: &str) -> Result<String, String> {
     }
 }
 
-/// Only allow the three speed/quality tiers the UI exposes; fall back to the
-/// default for anything unexpected.
+/// Map the UI's speed/quality tiers to concrete model ids. Anything unexpected
+/// falls back to the default (Sonnet 5).
 fn resolve_model(model: Option<String>) -> String {
     match model.as_deref() {
-        Some("haiku") | Some("sonnet") | Some("opus") => model.unwrap(),
-        _ => DEFAULT_MODEL.to_string(),
+        Some("haiku") => "claude-haiku-4-5-20251001".to_string(),
+        Some("opus") => "claude-opus-4-8".to_string(),
+        _ => "claude-sonnet-5".to_string(),
     }
 }
 
