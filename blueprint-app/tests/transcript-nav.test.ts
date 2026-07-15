@@ -1,0 +1,50 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  compactTranscriptPreview,
+  filterTranscriptEntryIndices,
+  findNearestTranscriptEntry,
+  sampleTranscriptEntries,
+  transcriptMarkerRatio,
+} from "../src/transcript-nav.ts";
+
+test("filterTranscriptEntryIndices applies the three minimap detail modes", () => {
+  const kinds = ["user", "assistant", "thinking", "tool", "error"] as const;
+
+  assert.deepEqual(filterTranscriptEntryIndices(kinds, "user"), [0]);
+  assert.deepEqual(filterTranscriptEntryIndices(kinds, "messages"), [0, 1]);
+  assert.deepEqual(filterTranscriptEntryIndices(kinds, "events"), [0, 1, 2, 3, 4]);
+});
+
+test("compactTranscriptPreview makes long transcript blocks scannable", () => {
+  const source = "# Tool call\n\n  npm   run   build\n" + "result ".repeat(40);
+
+  const preview = compactTranscriptPreview(source, 54);
+
+  assert.equal(preview, "Tool call npm run build result result result result r…");
+  assert.equal(preview.length, 54);
+});
+
+test("findNearestTranscriptEntry returns the block nearest the reading focus", () => {
+  const offsets = [20, 180, 510, 900];
+
+  assert.equal(findNearestTranscriptEntry(offsets, 15), 0);
+  assert.equal(findNearestTranscriptEntry(offsets, 340), 1);
+  assert.equal(findNearestTranscriptEntry(offsets, 760), 3);
+});
+
+test("sampleTranscriptEntries preserves endpoints while limiting long sessions", () => {
+  const sampled = sampleTranscriptEntries(2_000, 400);
+
+  assert.equal(sampled.length, 400);
+  assert.equal(sampled[0], 0);
+  assert.equal(sampled.at(-1), 1_999);
+  assert.ok(sampled.every((value, index) => index === 0 || value > sampled[index - 1]));
+});
+
+test("transcriptMarkerRatio clamps positions to the minimap track", () => {
+  assert.equal(transcriptMarkerRatio(-10, 1_000), 0);
+  assert.equal(transcriptMarkerRatio(250, 1_000), 0.25);
+  assert.equal(transcriptMarkerRatio(2_000, 1_000), 1);
+});

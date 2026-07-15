@@ -109,6 +109,18 @@ fn read_session_meta(path: &Path) -> Option<SessionMeta> {
         }
     }
 
+    // `claude -p` runs in Monet's isolated cache directory. Claude records
+    // those invocations as regular sessions too, but they contain Monet's own
+    // generation prompts rather than a user's development conversation.
+    let internal_work_dir = crate::util::work_dir();
+    if cwd
+        .as_deref()
+        .map(Path::new)
+        .is_some_and(|session_cwd| session_cwd == internal_work_dir.as_path())
+    {
+        return None;
+    }
+
     let id = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -158,6 +170,10 @@ pub fn resolve_transcript(path: &str) -> Result<String, String> {
 pub fn extract_transcript(path: &str) -> Result<String, String> {
     let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
     let mut out = String::new();
+    // Tool-bound assistant turns are usually operational narration ("Let me
+    // inspect…", "Now I'll run…"). Keep only the latest one as a fallback in
+    // case the session ends before Claude produces a final answer.
+    let mut pending_tool_narration: Option<String> = None;
     for line in content.lines() {
         let v: Value = match serde_json::from_str(line) {
             Ok(v) => v,
@@ -177,9 +193,10 @@ pub fn extract_transcript(path: &str) -> Result<String, String> {
                     if trimmed.is_empty() || is_noise(trimmed) {
                         continue;
                     }
-                    out.push_str("\n## User\n");
-                    out.push_str(trimmed);
-                    out.push('\n');
+                    if let Some(pending) = pending_tool_narration.take() {
+                        push_context_turn(&mut out, "Assistant", &pending);
+                    }
+                    push_context_turn(&mut out, "User", trimmed);
                 }
             }
             "assistant" => {
@@ -188,22 +205,44 @@ pub fn extract_transcript(path: &str) -> Result<String, String> {
                     if trimmed.is_empty() {
                         continue;
                     }
-                    out.push_str("\n## Assistant\n");
-                    out.push_str(trimmed);
-                    out.push('\n');
+                    let tool_bound = v
+                        .get("message")
+                        .and_then(|m| m.get("stop_reason"))
+                        .and_then(|x| x.as_str())
+                        == Some("tool_use");
+                    if tool_bound {
+                        pending_tool_narration = Some(trimmed.to_string());
+                    } else {
+                        pending_tool_narration = None;
+                        push_context_turn(&mut out, "Assistant", trimmed);
+                    }
                 }
             }
             _ => {}
         }
     }
+    if let Some(pending) = pending_tool_narration {
+        push_context_turn(&mut out, "Assistant", &pending);
+    }
     Ok(out)
+}
+
+fn push_context_turn(out: &mut String, role: &str, text: &str) {
+    out.push_str("\n## ");
+    out.push_str(role);
+    out.push('\n');
+    out.push_str(text);
+    out.push('\n');
 }
 
 fn is_noise(s: &str) -> bool {
     s.starts_with("<command-")
         || s.starts_with("<local-command")
+        || s.starts_with("<task-notification")
+        || s.starts_with("<tool-result")
         || s.starts_with("Caveat:")
         || s.starts_with("<system-reminder>")
+        || s == "[Request interrupted by user]"
 }
 
 /// A single rendered transcript block. `kind` drives per-type UI in the webview.
@@ -473,6 +512,47 @@ mod tests {
     }
 
     #[test]
+    fn generation_context_drops_tool_narration_and_notifications() {
+        let dir = std::env::temp_dir().join(format!("bp-context-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("s.jsonl");
+        let lines = vec![
+            r#"{"type":"user","message":{"role":"user","content":"design an auth flow"}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me inspect the repository first."}],"stop_reason":"tool_use"}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"secret.rs"}}],"stop_reason":"tool_use"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"large file dump"}]}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"The design uses a gateway before the service."}],"stop_reason":"end_turn"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<task-notification><status>completed</status></task-notification>"}}"#,
+        ];
+        std::fs::write(&f, lines.join("\n")).unwrap();
+
+        let context = extract_transcript(f.to_str().unwrap()).unwrap();
+
+        assert!(context.contains("design an auth flow"));
+        assert!(context.contains("The design uses a gateway"));
+        assert!(!context.contains("Let me inspect"));
+        assert!(!context.contains("task-notification"));
+        assert!(!context.contains("large file dump"));
+    }
+
+    #[test]
+    fn generation_context_keeps_last_tool_narration_when_session_is_interrupted() {
+        let dir = std::env::temp_dir().join(format!("bp-context-end-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("s.jsonl");
+        let lines = vec![
+            r#"{"type":"user","message":{"role":"user","content":"trace the deploy flow"}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I found the deployment entrypoint and am checking its worker."}],"stop_reason":"tool_use"}}"#,
+        ];
+        std::fs::write(&f, lines.join("\n")).unwrap();
+
+        let context = extract_transcript(f.to_str().unwrap()).unwrap();
+
+        assert!(context.contains("trace the deploy flow"));
+        assert!(context.contains("I found the deployment entrypoint"));
+    }
+
+    #[test]
     fn meta_skips_title_uses_cwd_for_project() {
         let dir = std::env::temp_dir().join(format!("bp-test2-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -486,5 +566,21 @@ mod tests {
         assert_eq!(m.title, "Queue Design");
         assert_eq!(m.project, "mvp");
         assert_eq!(m.message_count, 1);
+    }
+
+    #[test]
+    fn hides_sessions_created_by_monets_internal_claude_runs() {
+        let dir = std::env::temp_dir().join(format!("bp-internal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("s.jsonl");
+        let cwd = crate::util::work_dir();
+        let line = serde_json::json!({
+            "type": "user",
+            "message": { "role": "user", "content": "internal generation prompt" },
+            "cwd": cwd,
+        });
+        std::fs::write(&f, line.to_string()).unwrap();
+
+        assert!(read_session_meta(&f).is_none());
     }
 }

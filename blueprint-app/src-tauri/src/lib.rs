@@ -4,13 +4,21 @@ mod diagram;
 mod forest;
 mod glossary;
 mod imported;
+mod microworld;
 mod session;
 mod util;
 
 use ask::Turn;
 use diagram::DepStatus;
 use forest::{Forest, Tree};
+use microworld::Microworld;
 use session::SessionMeta;
+
+const CONTEXT_CACHE_VERSION: &str = "context-v2";
+
+fn generation_namespace(artifact: &str, lang: &str) -> String {
+    format!("{artifact}-{CONTEXT_CACHE_VERSION}-{lang}")
+}
 
 fn lang_of(lang: Option<String>) -> String {
     match lang.as_deref() {
@@ -91,7 +99,7 @@ async fn cached_forest(path: String, lang: Option<String>) -> Option<Forest> {
     let lang = lang_of(lang);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
-        cache::load(&format!("forest-{lang}"), &path, mtime)
+        cache::load(&generation_namespace("forest", &lang), &path, mtime)
     })
     .await
     .ok()
@@ -111,7 +119,7 @@ async fn generate_forest(
     let lang = lang_of(lang);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
-        let ns = format!("forest-{lang}");
+        let ns = generation_namespace("forest", &lang);
         if !force {
             if let Some(cached) = cache::load(&ns, &path, mtime) {
                 return Ok(cached);
@@ -135,7 +143,11 @@ async fn cached_tree(path: String, tree_id: String, lang: Option<String>) -> Opt
     let lang = lang_of(lang);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
-        cache::load(&format!("tree-{tree_id}-{lang}"), &path, mtime)
+        cache::load(
+            &generation_namespace(&format!("tree-{tree_id}"), &lang),
+            &path,
+            mtime,
+        )
     })
     .await
     .ok()
@@ -156,7 +168,7 @@ async fn generate_tree(
     let lang = lang_of(lang);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
-        let ns = format!("tree-{tree_id}-{lang}");
+        let ns = generation_namespace(&format!("tree-{tree_id}"), &lang);
         if !force {
             if let Some(cached) = cache::load(&ns, &path, mtime) {
                 return Ok(cached);
@@ -169,6 +181,70 @@ async fn generate_tree(
         let tree = forest::generate_tree(&transcript, &tree_name, &model, &lang)?;
         cache::save(&ns, &path, mtime, &tree);
         Ok(tree)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Cached interactive step-through for one tree candidate.
+#[tauri::command]
+async fn cached_microworld(
+    path: String,
+    tree_id: String,
+    world_id: String,
+    lang: Option<String>,
+) -> Option<Microworld> {
+    let lang = lang_of(lang);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mtime = cache::mtime_of(&path);
+        cache::load(
+            &generation_namespace(&format!("microworld-{tree_id}-{world_id}"), &lang),
+            &path,
+            mtime,
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Generate one schema-constrained step-through and cache it independently.
+#[tauri::command]
+async fn generate_microworld(
+    path: String,
+    tree_id: String,
+    tree_name: String,
+    world_id: String,
+    title: String,
+    blurb: String,
+    force: bool,
+    model: Option<String>,
+    lang: Option<String>,
+) -> Result<Microworld, String> {
+    let model = resolve_model(model);
+    let lang = lang_of(lang);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mtime = cache::mtime_of(&path);
+        let ns = generation_namespace(&format!("microworld-{tree_id}-{world_id}"), &lang);
+        if !force {
+            if let Some(cached) = cache::load(&ns, &path, mtime) {
+                return Ok(cached);
+            }
+        }
+        let transcript = source_transcript(&path)?;
+        if transcript.trim().is_empty() {
+            return Err("This source has no readable text.".to_string());
+        }
+        let world = microworld::generate(
+            &transcript,
+            &tree_name,
+            &title,
+            &blurb,
+            &model,
+            &lang,
+        )?;
+        cache::save(&ns, &path, mtime, &world);
+        Ok(world)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -192,6 +268,32 @@ async fn ask(
             return Err("This source has no readable text.".to_string());
         }
         ask::answer(&transcript, &history, &question, &model, &lang)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Reflection turn (Reflect section): the user reconstructs their understanding
+/// (`teach_back`) or proposes the next change (`propose_next`); Claude replies
+/// with formative feedback grounded in the source.
+#[tauri::command]
+async fn reflect(
+    path: String,
+    focus: String,
+    mode: String,
+    history: Vec<Turn>,
+    input: String,
+    model: Option<String>,
+    lang: Option<String>,
+) -> Result<String, String> {
+    let model = resolve_model(model);
+    let lang = lang_of(lang);
+    tauri::async_runtime::spawn_blocking(move || {
+        let transcript = source_transcript(&path)?;
+        if transcript.trim().is_empty() {
+            return Err("This source has no readable text.".to_string());
+        }
+        ask::reflect(&transcript, &focus, &mode, &history, &input, &model, &lang)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -270,7 +372,7 @@ async fn delete_session(path: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_within;
+    use super::{generation_namespace, resolve_within};
     use std::fs;
 
     #[test]
@@ -289,6 +391,14 @@ mod tests {
 
         let _ = fs::remove_dir_all(&root);
     }
+
+    #[test]
+    fn generation_cache_namespace_tracks_context_filter_version() {
+        assert_eq!(
+            generation_namespace("tree-auth", "ko"),
+            "tree-auth-context-v2-ko"
+        );
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -306,7 +416,10 @@ pub fn run() {
             generate_forest,
             cached_tree,
             generate_tree,
+            cached_microworld,
+            generate_microworld,
             ask,
+            reflect,
             fix_mermaid,
             cancel_generation,
             import_link,

@@ -11,7 +11,7 @@
   <body>
     <div id="app">
       <aside id="sidebar">
-        <header class="sidebar-header" data-tauri-drag-region>
+        <header class="sidebar-header" data-tauri-drag-region="deep">
           <div class="brand">
             <span class="brand-mark">✻</span>
             <h1>Monet</h1>
@@ -52,7 +52,7 @@
         </div>
 
         <section id="viewer" class="viewer hidden">
-          <header class="viewer-header" data-tauri-drag-region>
+          <header class="viewer-header" data-tauri-drag-region="deep">
             <div class="viewer-title">
               <h2 id="viewer-title">—</h2>
               <span id="viewer-sub" class="viewer-sub"></span>
@@ -81,7 +81,16 @@
           <div id="status-bar" class="status-bar hidden"></div>
           <div id="design-view" class="content-view design-view"></div>
           <div id="ask-view" class="content-view ask-view hidden"></div>
-          <div id="transcript-view" class="content-view transcript-view hidden"></div>
+          <div id="transcript-shell" class="content-view transcript-shell hidden">
+            <nav id="transcript-map" class="transcript-map hidden" aria-label="Transcript quick navigation">
+              <div id="transcript-map-track" class="transcript-map-track"></div>
+              <div id="transcript-map-preview" class="transcript-map-preview hidden" role="tooltip">
+                <div class="transcript-preview-label"></div>
+                <div class="transcript-preview-text"></div>
+              </div>
+            </nav>
+            <div id="transcript-view" class="transcript-view"></div>
+          </div>
         </section>
       </main>
     </div>
@@ -107,6 +116,16 @@
           <div class="seg" id="lang-select">
             <button data-lang="en">English</button>
             <button data-lang="ko">한국어</button>
+          </div>
+        </div>
+
+        <div class="setting">
+          <label id="minimap-mode-label">Transcript minimap</label>
+          <p class="setting-hint">Choose what each marker represents. User shows prompts only; Messages adds Claude replies; All events also includes thinking and tool calls.</p>
+          <div class="seg minimap-seg" id="minimap-mode-select" role="radiogroup" aria-labelledby="minimap-mode-label">
+            <button type="button" role="radio" data-minimap-mode="user">User only</button>
+            <button type="button" role="radio" data-minimap-mode="messages">Messages</button>
+            <button type="button" role="radio" data-minimap-mode="events">All events</button>
           </div>
         </div>
       </div>

@@ -1,7 +1,9 @@
 use crate::diagram::{render_diagrams, run_claude, Diagram};
 use crate::glossary::Term;
+use crate::microworld::MicroworldRef;
 use crate::util::{lang_clause, tail_chars};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// A selectable "tree" — a component / subsystem / topic worth drilling into.
 #[derive(Serialize, Deserialize, Clone)]
@@ -32,6 +34,9 @@ pub struct Tree {
     pub content: String,
     pub diagrams: Vec<Diagram>,
     pub terms: Vec<Term>,
+    /// Optional interactive step-throughs the reader can generate on demand.
+    #[serde(default)]
+    pub microworlds: Vec<MicroworldRef>,
 }
 
 const MAX_TRANSCRIPT_CHARS: usize = 160_000;
@@ -68,11 +73,12 @@ fn tree_prompt(transcript: &str, tree_name: &str, lang: &str) -> String {
 - `content`: detailed Markdown about "{name}" — how it works, its responsibilities, data flow, key decisions, interfaces, and any concrete implementation specifics actually discussed (files, functions, APIs, configs, edge cases). If the document lacks detail, say so briefly instead of fabricating.
 - `diagrams`: 0 to 2 diagrams that illustrate THIS part. {diagram} {mermaid}
 - `terms`: 3 to 10 key terms appearing in this explanation, each with a 1-2 sentence definition in this document's context.
+- `microworlds`: 0 to 2 step-through learning worlds that would help the reader experience a concrete flow or state transition in this part. Each has a short lowercase `id`, a `title`, and one-sentence `blurb`. Return none when the document does not contain a meaningful chronological flow.
 
 CRITICAL: Use ONLY information present in the document. Do NOT invent or add outside knowledge.
 
 Output ONLY a single JSON object, NO markdown code fences and NO prose before/after, exactly matching:
-{{"name":"{name}","content":"string","diagrams":[{{"title":"string","kind":"mermaid","source":"string","explanation":"string"}}],"terms":[{{"term":"string","definition":"string","category":"string"}}]}}
+{{"name":"{name}","content":"string","diagrams":[{{"title":"string","kind":"mermaid","source":"string","explanation":"string"}}],"terms":[{{"term":"string","definition":"string","category":"string"}}],"microworlds":[{{"id":"flow-id","title":"string","blurb":"string"}}]}}
 
 Here is the document:
 
@@ -147,8 +153,16 @@ fn parse_forest(raw: &str) -> Result<Forest, String> {
 }
 
 fn parse_tree(raw: &str) -> Result<Tree, String> {
-    serde_json::from_str::<Tree>(json_slice(raw)?)
-        .map_err(|e| format!("could not parse tree JSON: {e}"))
+    let mut tree = serde_json::from_str::<Tree>(json_slice(raw)?)
+        .map_err(|e| format!("could not parse tree JSON: {e}"))?;
+    let mut ids = HashSet::new();
+    tree.microworlds.retain(|candidate| {
+        !candidate.id.trim().is_empty()
+            && !candidate.title.trim().is_empty()
+            && ids.insert(candidate.id.clone())
+    });
+    tree.microworlds.truncate(2);
+    Ok(tree)
 }
 
 #[cfg(test)]
@@ -166,9 +180,35 @@ mod tests {
 
     #[test]
     fn parses_tree() {
-        let raw = r#"{"name":"Auth","content":"detail","diagrams":[{"title":"T","kind":"mermaid","source":"flowchart TD","explanation":"e"}],"terms":[]}"#;
+        let raw = r#"{"name":"Auth","content":"detail","diagrams":[{"title":"T","kind":"mermaid","source":"flowchart TD","explanation":"e"}],"terms":[],"microworlds":[{"id":"code-exchange","title":"Code exchange","blurb":"Follow the authorization code."}]}"#;
         let t = parse_tree(raw).unwrap();
         assert_eq!(t.name, "Auth");
         assert_eq!(t.diagrams.len(), 1);
+        assert_eq!(t.microworlds[0].id, "code-exchange");
+    }
+
+    #[test]
+    fn old_tree_cache_without_microworlds_stays_compatible() {
+        let raw = r#"{"name":"Auth","content":"detail","diagrams":[],"terms":[]}"#;
+
+        let tree = parse_tree(raw).unwrap();
+
+        assert!(tree.microworlds.is_empty());
+    }
+
+    #[test]
+    fn limits_microworld_candidates_and_drops_duplicate_ids() {
+        let raw = r#"{"name":"Auth","content":"detail","diagrams":[],"terms":[],"microworlds":[
+          {"id":"one","title":"One","blurb":"First"},
+          {"id":"one","title":"Duplicate","blurb":"Duplicate"},
+          {"id":"two","title":"Two","blurb":"Second"},
+          {"id":"three","title":"Three","blurb":"Third"}
+        ]}"#;
+
+        let tree = parse_tree(raw).unwrap();
+
+        assert_eq!(tree.microworlds.len(), 2);
+        assert_eq!(tree.microworlds[0].id, "one");
+        assert_eq!(tree.microworlds[1].id, "two");
     }
 }

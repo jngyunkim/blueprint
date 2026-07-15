@@ -4,6 +4,16 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import mermaid from "mermaid";
 import { marked } from "marked";
+import {
+  compactTranscriptPreview,
+  filterTranscriptEntryIndices,
+  findNearestTranscriptEntry,
+  sampleTranscriptEntries,
+  transcriptMarkerRatio,
+  type TranscriptEntryKind,
+  type TranscriptMinimapMode,
+} from "./transcript-nav";
+import { microworldStateRows } from "./microworld";
 
 mermaid.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "loose" });
 
@@ -30,6 +40,7 @@ type Term = { term: string; definition: string; category: string };
 
 /** A selectable component/topic to drill into. */
 type TreeRef = { id: string; name: string; blurb: string };
+type MicroworldRef = { id: string; title: string; blurb: string };
 /** The forest: big-picture overview + the trees to explore. */
 type Forest = {
   overview: string;
@@ -38,9 +49,34 @@ type Forest = {
   trees: TreeRef[];
 };
 /** One explored tree: an in-depth look at a single component/topic. */
-type Tree = { name: string; content: string; diagrams: Diagram[]; terms: Term[] };
+type Tree = {
+  name: string;
+  content: string;
+  diagrams: Diagram[];
+  terms: Term[];
+  microworlds?: MicroworldRef[];
+};
+type MicroworldStep = {
+  label: string;
+  detail: string;
+  from: string;
+  to: string;
+  state: Record<string, string>;
+};
+type Microworld = {
+  kind: "steps";
+  title: string;
+  intro: string;
+  actors: string[];
+  steps: MicroworldStep[];
+};
 
 type AskTurn = { role: "user" | "assistant"; content: string };
+
+/** Reflect section: active recall by reconstruction (teach_back) and recall in
+ *  service of participation (propose_next). Threads are kept per tree. */
+type ReflectMode = "teach_back" | "propose_next";
+type ReflectThreads = { teach_back: AskTurn[]; propose_next: AskTurn[] };
 
 /** One structured transcript block (session Transcript tab). */
 type Msg = {
@@ -62,6 +98,11 @@ type DepStatus = {
 let sessions: SessionMeta[] = [];
 let selected: SessionMeta | null = null;
 let sourceTab: "sessions" | "links" = "sessions";
+// Multi-select for bulk delete: mode flag, the chosen paths, and whether the
+// bulk-delete confirmation is showing.
+let selectMode = false;
+const selectedForDelete = new Set<string>();
+let confirmingBulk = false;
 const isLinkSource = (s: SessionMeta) => s.path.endsWith(".links.json");
 type View = "design" | "ask" | "transcript";
 let currentView: View = "design";
@@ -70,16 +111,35 @@ let currentView: View = "design";
 let forest: Forest | null = null;
 let treeCache: Record<string, Tree | null> = {}; // by tree id
 let currentTreeId: string | null = null; // null = forest view; else drilled into a tree
+let microworldCache: Record<string, Microworld | null> = {};
+let activeMicroworld: Record<string, string | null> = {};
+let microworldStep: Record<string, number> = {};
 // What's generating right now (so the panel can show a loading + Stop).
-let busy: { kind: "forest" } | { kind: "tree"; id: string } | null = null;
+let busy:
+  | { kind: "forest" }
+  | { kind: "tree"; id: string }
+  | { kind: "microworld"; treeId: string; worldId: string }
+  | null = null;
 
 // Ask tab conversation for the selected source.
 let askHistory: AskTurn[] = [];
 let asking = false;
 
+// Reflect threads per tree id, and the single in-flight reflection (if any).
+let reflectState: Record<string, ReflectThreads> = {};
+let reflecting: { treeId: string; mode: ReflectMode } | null = null;
+
 type Lang = "en" | "ko";
 const savedLang = localStorage.getItem("bp-lang");
 let lang: Lang = savedLang === "ko" ? "ko" : "en";
+
+const savedMinimapMode = localStorage.getItem("bp-minimap-mode");
+let minimapMode: TranscriptMinimapMode =
+  savedMinimapMode === "user" ||
+  savedMinimapMode === "messages" ||
+  savedMinimapMode === "events"
+    ? savedMinimapMode
+    : "events";
 
 type Model = "haiku" | "sonnet" | "opus";
 const MODEL_LABELS: Record<Model, string> = {
@@ -104,7 +164,25 @@ const viewerSub = $("#viewer-sub");
 const statusBar = $("#status-bar");
 const designView = $("#design-view");
 const askView = $("#ask-view");
+const transcriptShell = $("#transcript-shell");
 const transcriptView = $<HTMLDivElement>("#transcript-view");
+const transcriptMap = $("#transcript-map");
+const transcriptMapTrack = $("#transcript-map-track");
+const transcriptMapPreview = $("#transcript-map-preview");
+
+type TranscriptNavKind = TranscriptEntryKind;
+type TranscriptNavEntry = {
+  element: HTMLElement;
+  label: string;
+  preview: string;
+  kind: TranscriptNavKind;
+};
+let transcriptNavEntries: TranscriptNavEntry[] = [];
+let transcriptModeEntryIndices: number[] = [];
+let transcriptNavMarkers: HTMLButtonElement[] = [];
+let transcriptNavFrame = 0;
+let transcriptProgressFrame = 0;
+let transcriptHoverMarker = -1;
 
 function fmtDate(epochSecs: number): string {
   const d = new Date(epochSecs * 1000);
@@ -129,10 +207,34 @@ function renderSessionList() {
 
   sessionList.innerHTML = "";
 
-  const label = document.createElement("div");
+  // Header row: the "Recents"/"Links" label plus the select-mode actions.
+  const header = document.createElement("div");
+  header.className = "recents-header";
+  const label = document.createElement("span");
   label.className = "recents-label";
   label.textContent = sourceTab === "links" ? "Links" : "Recents";
-  sessionList.appendChild(label);
+  header.appendChild(label);
+  if (filtered.length > 0) header.appendChild(selectActions(filtered));
+  sessionList.appendChild(header);
+
+  if (confirmingBulk) {
+    const bar = document.createElement("div");
+    bar.className = "bulk-confirm";
+    bar.innerHTML = `
+      <span class="confirm-text">Move ${selectedForDelete.size} to Trash?</span>
+      <span class="confirm-actions">
+        <button class="confirm-yes">Trash</button>
+        <button class="confirm-no">Cancel</button>
+      </span>`;
+    bar.querySelector(".confirm-no")!.addEventListener("click", () => {
+      confirmingBulk = false;
+      renderSessionList();
+    });
+    bar.querySelector(".confirm-yes")!.addEventListener("click", () =>
+      bulkDelete([...selectedForDelete]),
+    );
+    sessionList.appendChild(bar);
+  }
 
   if (filtered.length === 0) {
     const empty = document.createElement("p");
@@ -145,27 +247,124 @@ function renderSessionList() {
 
   // Flat, Claude-style list: title only, active row gets a dot + highlight.
   for (const s of filtered) {
+    const checked = selectedForDelete.has(s.path);
     const item = document.createElement("div");
-    item.className = "session-item" + (selected?.path === s.path ? " active" : "");
+    item.className =
+      "session-item" +
+      (!selectMode && selected?.path === s.path ? " active" : "") +
+      (selectMode ? " selecting" : "") +
+      (selectMode && checked ? " checked" : "");
 
     const open = document.createElement("button");
     open.className = "session-open";
     open.title = `${s.project} · ${fmtDate(s.modified)} · ${s.message_count} msgs`;
-    open.innerHTML = `<span class="session-dot"></span><span class="session-title">${escapeHtml(s.title)}</span>`;
-    open.addEventListener("click", () => selectSession(s));
-
-    const del = document.createElement("button");
-    del.className = "session-del";
-    del.title = "Move to Trash";
-    del.textContent = "✕";
-    del.addEventListener("click", (e) => {
-      e.stopPropagation();
-      confirmDelete(item, s);
+    const marker = selectMode
+      ? `<span class="session-check">${checked ? "✓" : ""}</span>`
+      : `<span class="session-dot"></span>`;
+    open.innerHTML = `${marker}<span class="session-title">${escapeHtml(s.title)}</span>`;
+    open.addEventListener("click", () => {
+      if (selectMode) toggleForDelete(s);
+      else selectSession(s);
     });
-
     item.appendChild(open);
-    item.appendChild(del);
+
+    if (!selectMode) {
+      const del = document.createElement("button");
+      del.className = "session-del";
+      del.title = "Move to Trash";
+      del.textContent = "✕";
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        confirmDelete(item, s);
+      });
+      item.appendChild(del);
+    }
+
     sessionList.appendChild(item);
+  }
+}
+
+/** The right-side header actions: "Select" normally, or "Delete (N) / Cancel"
+ *  while in select mode. */
+function selectActions(filtered: SessionMeta[]): HTMLElement {
+  const wrap = document.createElement("span");
+  wrap.className = "list-actions";
+  if (!selectMode) {
+    const start = document.createElement("button");
+    start.className = "list-action";
+    start.textContent = "Select";
+    start.addEventListener("click", () => {
+      selectMode = true;
+      selectedForDelete.clear();
+      confirmingBulk = false;
+      renderSessionList();
+    });
+    wrap.appendChild(start);
+    return wrap;
+  }
+
+  const del = document.createElement("button");
+  del.className = "list-action danger";
+  del.textContent = `Delete (${selectedForDelete.size})`;
+  del.disabled = selectedForDelete.size === 0;
+  del.addEventListener("click", () => {
+    if (selectedForDelete.size === 0) return;
+    confirmingBulk = true;
+    renderSessionList();
+  });
+
+  const all = document.createElement("button");
+  all.className = "list-action";
+  const allSelected = filtered.every((s) => selectedForDelete.has(s.path));
+  all.textContent = allSelected ? "None" : "All";
+  all.addEventListener("click", () => {
+    if (allSelected) filtered.forEach((s) => selectedForDelete.delete(s.path));
+    else filtered.forEach((s) => selectedForDelete.add(s.path));
+    renderSessionList();
+  });
+
+  const cancel = document.createElement("button");
+  cancel.className = "list-action";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", exitSelectMode);
+
+  wrap.append(all, del, cancel);
+  return wrap;
+}
+
+function toggleForDelete(s: SessionMeta) {
+  if (selectedForDelete.has(s.path)) selectedForDelete.delete(s.path);
+  else selectedForDelete.add(s.path);
+  renderSessionList();
+}
+
+function exitSelectMode() {
+  selectMode = false;
+  confirmingBulk = false;
+  selectedForDelete.clear();
+  renderSessionList();
+}
+
+/** Move each chosen source to Trash, then leave select mode. */
+async function bulkDelete(paths: string[]) {
+  const failures: string[] = [];
+  for (const p of paths) {
+    try {
+      await invoke("delete_session", { path: p });
+    } catch {
+      failures.push(p);
+    }
+  }
+  const deleted = new Set(paths.filter((p) => !failures.includes(p)));
+  sessions = sessions.filter((x) => !deleted.has(x.path));
+  if (selected && deleted.has(selected.path)) {
+    selected = null;
+    viewer.classList.add("hidden");
+    emptyState.classList.remove("hidden");
+  }
+  exitSelectMode();
+  if (failures.length) {
+    setStatus(`Could not delete ${failures.length} of ${paths.length} sources.`, "error");
   }
 }
 
@@ -245,13 +444,19 @@ async function selectSession(s: SessionMeta) {
   // Reset per-source state.
   forest = null;
   treeCache = {};
+  microworldCache = {};
+  activeMicroworld = {};
+  microworldStep = {};
   currentTreeId = null;
   busy = null;
   askHistory = [];
   asking = false;
+  reflectState = {};
+  reflecting = null;
   switchView("design");
   designView.innerHTML = "";
   renderAsk();
+  clearTranscriptNavigation();
   transcriptView.textContent = "Loading transcript…";
 
   // Prefetch the cached forest (no Claude call); if present, also prefetch its
@@ -296,12 +501,15 @@ async function selectSession(s: SessionMeta) {
 }
 
 function renderTranscript(blocks: Msg[]) {
+  clearTranscriptNavigation();
   transcriptView.innerHTML = "";
   if (!blocks.length) {
     transcriptView.innerHTML = `<p class="muted">No messages in this session.</p>`;
     return;
   }
-  for (const b of blocks) {
+  let i = 0;
+  while (i < blocks.length) {
+    const b = blocks[i];
     if (b.kind === "text") {
       const el = document.createElement("div");
       el.className = `msg msg-${b.role}`;
@@ -309,25 +517,216 @@ function renderTranscript(blocks: Msg[]) {
         `<div class="msg-role">${b.role === "user" ? "You" : "Claude"}</div>` +
         `<div class="msg-body">${marked.parse(b.text) as string}</div>`;
       transcriptView.appendChild(el);
+      registerTranscriptNav(
+        el,
+        b.role === "user" ? "You" : "Claude",
+        b.text,
+        b.role,
+      );
+      i++;
     } else if (b.kind === "thinking") {
-      transcriptView.appendChild(
-        aside("msg-thinking", `<span class="aside-badge">✻ Thinking</span>`,
-          `<div class="aside-body">${marked.parse(b.text) as string}</div>`),
+      const thinking = aside(
+        "msg-thinking",
+        `<span class="aside-badge">Thinking</span>`,
+        `<div class="aside-body">${marked.parse(b.text) as string}</div>`,
       );
-    } else if (b.kind === "tool_use") {
-      const sub = b.subtitle ? `<code class="aside-sub">${escapeHtml(b.subtitle)}</code>` : "";
-      transcriptView.appendChild(
-        aside("msg-tool", `<span class="aside-badge tool">⚙ ${escapeHtml(b.tool || "tool")}</span>${sub}`,
-          `<pre class="aside-code">${escapeHtml(b.text)}</pre>`),
-      );
-    } else if (b.kind === "tool_result") {
-      transcriptView.appendChild(
-        aside("msg-result" + (b.is_error ? " error" : ""),
-          `<span class="aside-badge">${b.is_error ? "⚠ Tool error" : "↳ Tool result"}</span>`,
-          `<pre class="aside-code">${escapeHtml(b.text)}</pre>`),
-      );
+      transcriptView.appendChild(thinking);
+      registerTranscriptNav(thinking, "Thinking", b.text, "thinking");
+      i++;
+    } else if (b.kind === "tool_use" || b.kind === "tool_result") {
+      // Group a run of tool calls with the run of results that follows, so
+      // each call and its result read as one connected pair.
+      const calls: Msg[] = [];
+      while (i < blocks.length && blocks[i].kind === "tool_use") calls.push(blocks[i++]);
+      const results: Msg[] = [];
+      while (i < blocks.length && blocks[i].kind === "tool_result") results.push(blocks[i++]);
+      const n = Math.max(calls.length, results.length);
+      for (let k = 0; k < n; k++) {
+        const call = calls[k];
+        const result = results[k];
+        const pair = document.createElement("div");
+        pair.className = "tool-pair" + (result?.is_error ? " error" : "");
+        if (call) pair.appendChild(toolCall(call));
+        if (result) pair.appendChild(toolResult(result));
+        transcriptView.appendChild(pair);
+        const toolName = call?.tool || "Tool result";
+        const preview = [call?.subtitle || call?.text, result?.text]
+          .filter(Boolean)
+          .join(" — ");
+        registerTranscriptNav(
+          pair,
+          `Tool · ${toolName}`,
+          preview,
+          result?.is_error ? "error" : "tool",
+        );
+      }
+    } else {
+      i++;
     }
   }
+  window.requestAnimationFrame(buildTranscriptNavigation);
+}
+
+function registerTranscriptNav(
+  element: HTMLElement,
+  label: string,
+  text: string,
+  kind: TranscriptNavKind,
+) {
+  element.dataset.transcriptNav = kind;
+  transcriptNavEntries.push({
+    element,
+    label,
+    preview: compactTranscriptPreview(text),
+    kind,
+  });
+}
+
+function clearTranscriptNavigation() {
+  if (transcriptNavFrame) window.cancelAnimationFrame(transcriptNavFrame);
+  if (transcriptProgressFrame) window.cancelAnimationFrame(transcriptProgressFrame);
+  transcriptNavFrame = 0;
+  transcriptProgressFrame = 0;
+  transcriptHoverMarker = -1;
+  transcriptNavEntries = [];
+  transcriptModeEntryIndices = [];
+  transcriptNavMarkers = [];
+  transcriptMapTrack.innerHTML = "";
+  transcriptMap.classList.add("hidden");
+  transcriptMapPreview.classList.add("hidden");
+}
+
+function buildTranscriptNavigation() {
+  transcriptMapTrack.innerHTML = "";
+  transcriptNavMarkers = [];
+  transcriptModeEntryIndices = filterTranscriptEntryIndices(
+    transcriptNavEntries.map((entry) => entry.kind),
+    minimapMode,
+  );
+  if (transcriptModeEntryIndices.length < 2) {
+    transcriptMap.classList.add("hidden");
+    return;
+  }
+
+  for (const modePosition of sampleTranscriptEntries(transcriptModeEntryIndices.length)) {
+    const entryIndex = transcriptModeEntryIndices[modePosition];
+    const entry = transcriptNavEntries[entryIndex];
+    const marker = document.createElement("button");
+    marker.type = "button";
+    marker.className = `transcript-marker ${entry.kind}`;
+    marker.dataset.entryIndex = String(entryIndex);
+    marker.dataset.modePosition = String(modePosition);
+    marker.setAttribute("aria-label", `Jump to ${entry.label}: ${entry.preview}`);
+    marker.addEventListener("focus", () => showTranscriptPreview(marker, entryIndex));
+    marker.addEventListener("blur", hideTranscriptPreview);
+    marker.addEventListener("click", (event) => {
+      event.stopPropagation();
+      jumpToTranscriptEntry(entryIndex);
+    });
+    transcriptMapTrack.appendChild(marker);
+    transcriptNavMarkers.push(marker);
+  }
+  transcriptMap.classList.remove("hidden");
+  layoutTranscriptNavigation();
+}
+
+function layoutTranscriptNavigation() {
+  if (!transcriptNavMarkers.length) return;
+  const first = transcriptNavEntries[0].element.offsetTop;
+  const last = transcriptNavEntries[transcriptNavEntries.length - 1]?.element.offsetTop ?? first;
+  const span = Math.max(1, last - first);
+  for (const marker of transcriptNavMarkers) {
+    const entryIndex = Number(marker.dataset.entryIndex);
+    const offset = transcriptNavEntries[entryIndex].element.offsetTop - first;
+    marker.style.top = `${transcriptMarkerRatio(offset, span) * 100}%`;
+  }
+  updateTranscriptNavigation();
+}
+
+function updateTranscriptNavigation() {
+  if (!transcriptNavMarkers.length) return;
+  const sampledOffsets = transcriptNavMarkers.map((marker) => {
+    const entryIndex = Number(marker.dataset.entryIndex);
+    return transcriptNavEntries[entryIndex].element.offsetTop;
+  });
+  const focusY = transcriptView.scrollTop + transcriptView.clientHeight * 0.3;
+  const activeMarker = findNearestTranscriptEntry(sampledOffsets, focusY);
+  transcriptNavMarkers.forEach((marker, index) =>
+    marker.classList.toggle("active", index === activeMarker),
+  );
+}
+
+function scheduleTranscriptNavigation() {
+  if (transcriptNavFrame) return;
+  transcriptNavFrame = window.requestAnimationFrame(() => {
+    transcriptNavFrame = 0;
+    layoutTranscriptNavigation();
+  });
+}
+
+function scheduleTranscriptProgress() {
+  if (transcriptProgressFrame) return;
+  transcriptProgressFrame = window.requestAnimationFrame(() => {
+    transcriptProgressFrame = 0;
+    updateTranscriptNavigation();
+  });
+}
+
+function transcriptMarkerAt(clientY: number): number {
+  if (!transcriptNavMarkers.length) return -1;
+  const trackTop = transcriptMapTrack.getBoundingClientRect().top;
+  return findNearestTranscriptEntry(
+    transcriptNavMarkers.map((marker) => marker.offsetTop),
+    clientY - trackTop,
+  );
+}
+
+function jumpToTranscriptEntry(entryIndex: number) {
+  const target = transcriptNavEntries[entryIndex]?.element;
+  if (!target) return;
+  transcriptView.scrollTo({
+    top: Math.max(0, target.offsetTop - transcriptView.clientHeight * 0.3),
+    behavior: "smooth",
+  });
+}
+
+function showTranscriptPreview(marker: HTMLButtonElement, entryIndex: number) {
+  const entry = transcriptNavEntries[entryIndex];
+  if (!entry) return;
+  transcriptNavMarkers.forEach((item) => item.classList.remove("hovered"));
+  marker.classList.add("hovered");
+  transcriptHoverMarker = transcriptNavMarkers.indexOf(marker);
+  transcriptMapPreview.querySelector<HTMLElement>(".transcript-preview-label")!.textContent =
+    `${entry.label} · ${Number(marker.dataset.modePosition) + 1}/${transcriptModeEntryIndices.length}`;
+  transcriptMapPreview.querySelector<HTMLElement>(".transcript-preview-text")!.textContent =
+    entry.preview || "No preview available";
+  transcriptMapPreview.classList.remove("hidden");
+  const trackHeight = transcriptMapTrack.clientHeight;
+  const previewY = Math.min(Math.max(marker.offsetTop, 48), Math.max(48, trackHeight - 48));
+  transcriptMapPreview.style.top = `${previewY}px`;
+}
+
+function hideTranscriptPreview() {
+  transcriptNavMarkers.forEach((marker) => marker.classList.remove("hovered"));
+  transcriptHoverMarker = -1;
+  transcriptMapPreview.classList.add("hidden");
+}
+
+function toolCall(b: Msg): HTMLElement {
+  const sub = b.subtitle ? `<code class="aside-sub">${escapeHtml(b.subtitle)}</code>` : "";
+  return aside(
+    "msg-tool",
+    `<span class="aside-badge tool">${escapeHtml(b.tool || "tool")}</span>${sub}`,
+    `<pre class="aside-code">${escapeHtml(b.text)}</pre>`,
+  );
+}
+
+function toolResult(b: Msg): HTMLElement {
+  return aside(
+    "msg-result" + (b.is_error ? " error" : ""),
+    `<span class="aside-badge">${b.is_error ? "Tool error" : "Tool result"}</span>`,
+    `<pre class="aside-code">${escapeHtml(b.text)}</pre>`,
+  );
 }
 
 /** A collapsible aside toggled by JS (WKWebView breaks <details> when the
@@ -344,6 +743,7 @@ function aside(cls: string, summaryHTML: string, bodyHTML: string): HTMLElement 
   btn.addEventListener("click", () => {
     const nowHidden = body.classList.toggle("hidden");
     wrap.classList.toggle("open", !nowHidden);
+    if (transcriptView.contains(wrap)) scheduleTranscriptNavigation();
   });
   wrap.appendChild(btn);
   wrap.appendChild(body);
@@ -452,7 +852,9 @@ function switchView(view: View) {
   });
   designView.classList.toggle("hidden", view !== "design");
   askView.classList.toggle("hidden", view !== "ask");
-  transcriptView.classList.toggle("hidden", view !== "transcript");
+  transcriptShell.classList.toggle("hidden", view !== "transcript");
+  if (view === "transcript") scheduleTranscriptNavigation();
+  else hideTranscriptPreview();
   updateGenerateButton();
 }
 
@@ -569,18 +971,19 @@ function renderForestView() {
   const section = document.createElement("div");
   section.className = "tree-section";
   section.innerHTML = `<h4 class="tree-section-title">Explore in depth</h4>`;
-  const grid = document.createElement("div");
-  grid.className = "tree-grid";
+  const list = document.createElement("div");
+  list.className = "tree-list";
   for (const t of forest.trees) {
     const card = document.createElement("button");
     card.className = "tree-card" + (treeCache[t.id] ? " has-content" : "");
     card.innerHTML = `
       <span class="tree-name">${escapeHtml(t.name)}</span>
-      <span class="tree-blurb">${escapeHtml(t.blurb || "")}</span>`;
+      <span class="tree-blurb">${escapeHtml(t.blurb || "")}</span>
+      <span class="tree-row-end">${treeCache[t.id] ? '<span class="tree-cache-dot" title="Generated"></span>' : ""}<span class="tree-arrow">→</span></span>`;
     card.addEventListener("click", () => openTree(t.id));
-    grid.appendChild(card);
+    list.appendChild(card);
   }
-  section.appendChild(grid);
+  section.appendChild(list);
   scroll.appendChild(section);
 }
 
@@ -617,6 +1020,359 @@ function renderTreeView() {
     return;
   }
   void appendRichContent(scroll, t.name, t.content, t.terms, t.diagrams);
+  renderMicroworlds(scroll, currentTreeId, t);
+  renderReflect(scroll, currentTreeId);
+}
+
+// ---------- Microworld: step through a grounded flow and its state ----------
+
+const microworldKey = (treeId: string, worldId: string) => `${treeId}::${worldId}`;
+
+function renderMicroworlds(scroll: HTMLElement, treeId: string, tree: Tree) {
+  const refs = tree.microworlds ?? [];
+  if (refs.length === 0) return;
+
+  const section = document.createElement("section");
+  section.className = "microworld-section";
+  section.innerHTML = `<div class="microworld-section-head">
+      <div><h4>Explore the flow</h4><p>Move through the design and watch its state change.</p></div>
+    </div>`;
+  const activeId = activeMicroworld[treeId];
+  if (!activeId) {
+    const choices = document.createElement("div");
+    choices.className = "microworld-choices";
+    for (const ref of refs) {
+      const button = document.createElement("button");
+      button.className = "microworld-choice";
+      button.innerHTML = `<span class="microworld-choice-title">${escapeHtml(ref.title)}</span>
+        <span>${escapeHtml(ref.blurb)}</span><span class="microworld-choice-action">Step through →</span>`;
+      button.addEventListener("click", () => void openMicroworld(treeId, tree.name, ref));
+      choices.appendChild(button);
+    }
+    section.appendChild(choices);
+  } else {
+    const ref = refs.find((item) => item.id === activeId);
+    const key = microworldKey(treeId, activeId);
+    const head = document.createElement("div");
+    head.className = "microworld-active-head";
+    head.innerHTML = `<button class="microworld-close">← All flows</button>`;
+    head.querySelector("button")!.addEventListener("click", () => {
+      activeMicroworld[treeId] = null;
+      renderDesignTab();
+    });
+    section.appendChild(head);
+
+    if (busy?.kind === "microworld" && busy.treeId === treeId && busy.worldId === activeId) {
+      const loading = document.createElement("div");
+      loading.className = "microworld-loading";
+      designLoadingStop = renderLoading(loading, `Building “${ref?.title ?? activeId}”…`);
+      addStop(loading);
+      section.appendChild(loading);
+    } else if (microworldCache[key]) {
+      section.appendChild(renderMicroworldPlayer(treeId, activeId, microworldCache[key]!));
+    } else if (ref) {
+      const retry = document.createElement("div");
+      retry.className = "generate-prompt compact";
+      retry.innerHTML = `<p>This flow isn't generated yet.</p><button class="generate-btn">Generate</button>`;
+      retry.querySelector("button")!.addEventListener("click", () =>
+        void generateMicroworld(treeId, tree.name, ref, false),
+      );
+      section.appendChild(retry);
+    }
+  }
+  scroll.appendChild(section);
+}
+
+function renderMicroworldPlayer(
+  treeId: string,
+  worldId: string,
+  world: Microworld,
+): HTMLElement {
+  const key = microworldKey(treeId, worldId);
+  const index = Math.max(0, Math.min(microworldStep[key] ?? 0, world.steps.length - 1));
+  microworldStep[key] = index;
+  const step = world.steps[index];
+  const player = document.createElement("div");
+  player.className = "microworld-player";
+
+  const top = document.createElement("div");
+  top.className = "microworld-player-head";
+  top.innerHTML = `<div><h5>${escapeHtml(world.title)}</h5><p>${escapeHtml(world.intro)}</p></div>
+    <span class="microworld-count">${index + 1} / ${world.steps.length}</span>`;
+  player.appendChild(top);
+
+  const timeline = document.createElement("div");
+  timeline.className = "microworld-timeline";
+  world.steps.forEach((item, itemIndex) => {
+    const button = document.createElement("button");
+    button.className = itemIndex === index ? "active" : itemIndex < index ? "seen" : "";
+    button.title = item.label;
+    button.setAttribute("aria-label", `Step ${itemIndex + 1}: ${item.label}`);
+    button.addEventListener("click", () => setMicroworldStep(key, itemIndex));
+    timeline.appendChild(button);
+  });
+  player.appendChild(timeline);
+
+  const panels = document.createElement("div");
+  panels.className = "microworld-panels";
+  const story = document.createElement("article");
+  story.className = "microworld-panel microworld-story";
+  story.innerHTML = `<span class="microworld-eyebrow">Step ${index + 1}</span>
+    <h6>${escapeHtml(step.label)}</h6><div>${marked.parse(step.detail) as string}</div>`;
+  panels.appendChild(story);
+  panels.appendChild(renderMicroworldState(world.steps, index));
+  panels.appendChild(renderMicroworldFlow(world, index));
+  player.appendChild(panels);
+
+  const nav = document.createElement("div");
+  nav.className = "microworld-nav";
+  nav.innerHTML = `<button class="ghost-btn prev" ${index === 0 ? "disabled" : ""}>← Previous</button>
+    <button class="ghost-btn next" ${index === world.steps.length - 1 ? "disabled" : ""}>Next →</button>`;
+  nav.querySelector(".prev")!.addEventListener("click", () => setMicroworldStep(key, index - 1));
+  nav.querySelector(".next")!.addEventListener("click", () => setMicroworldStep(key, index + 1));
+  player.appendChild(nav);
+  return player;
+}
+
+function renderMicroworldState(steps: MicroworldStep[], index: number): HTMLElement {
+  const panel = document.createElement("article");
+  panel.className = "microworld-panel microworld-state";
+  panel.innerHTML = `<span class="microworld-eyebrow">State snapshot</span>`;
+  const rows = document.createElement("div");
+  rows.className = "microworld-state-rows";
+  for (const row of microworldStateRows(steps, index)) {
+    const item = document.createElement("div");
+    item.className = "microworld-state-row" + (row.changed ? " changed" : "");
+    item.innerHTML = `<code>${escapeHtml(row.key)}</code><span class="state-values">${
+      row.changed && row.before !== null
+        ? `<del>${escapeHtml(row.before)}</del><span>→</span>`
+        : ""
+    }<strong>${escapeHtml(row.value ?? "removed")}</strong></span>`;
+    rows.appendChild(item);
+  }
+  panel.appendChild(rows);
+  return panel;
+}
+
+function renderMicroworldFlow(world: Microworld, index: number): HTMLElement {
+  const step = world.steps[index];
+  const panel = document.createElement("article");
+  panel.className = "microworld-panel microworld-flow";
+  panel.innerHTML = `<span class="microworld-eyebrow">Actor transition</span>`;
+  const lanes = document.createElement("div");
+  lanes.className = "microworld-actors";
+  for (const actor of world.actors) {
+    const item = document.createElement("div");
+    item.className = "microworld-actor" +
+      (actor === step.from ? " from" : actor === step.to ? " to" : "");
+    item.innerHTML = `<span>${escapeHtml(actor)}</span>`;
+    lanes.appendChild(item);
+  }
+  const transition = document.createElement("div");
+  transition.className = "microworld-transition";
+  transition.innerHTML = `<strong>${escapeHtml(step.from)}</strong><span>→</span><strong>${escapeHtml(step.to)}</strong>`;
+  panel.append(lanes, transition);
+  return panel;
+}
+
+function setMicroworldStep(key: string, index: number) {
+  const world = microworldCache[key];
+  if (!world) return;
+  microworldStep[key] = Math.max(0, Math.min(index, world.steps.length - 1));
+  renderDesignTab();
+}
+
+async function openMicroworld(treeId: string, treeName: string, ref: MicroworldRef) {
+  activeMicroworld[treeId] = ref.id;
+  const key = microworldKey(treeId, ref.id);
+  if (microworldCache[key]) {
+    renderDesignTab();
+    return;
+  }
+  if (!selected || busy) return;
+  const s = selected;
+  let cached: Microworld | null = null;
+  try {
+    cached = await invoke<Microworld | null>("cached_microworld", {
+      path: s.path,
+      treeId,
+      worldId: ref.id,
+      lang,
+    });
+  } catch {
+    // A cache miss and an unreadable old cache both fall through to generation.
+  }
+  if (selected?.path !== s.path) return;
+  if (cached) {
+    microworldCache[key] = cached;
+    renderDesignTab();
+  } else {
+    await generateMicroworld(treeId, treeName, ref, false);
+  }
+}
+
+async function generateMicroworld(
+  treeId: string,
+  treeName: string,
+  ref: MicroworldRef,
+  force: boolean,
+) {
+  if (!selected || busy) return;
+  const s = selected;
+  busy = { kind: "microworld", treeId, worldId: ref.id };
+  activeMicroworld[treeId] = ref.id;
+  renderDesignTab();
+  try {
+    const world = await invoke<Microworld>("generate_microworld", {
+      path: s.path,
+      treeId,
+      treeName,
+      worldId: ref.id,
+      title: ref.title,
+      blurb: ref.blurb,
+      force,
+      model,
+      lang,
+    });
+    if (selected?.path !== s.path) return;
+    microworldCache[microworldKey(treeId, ref.id)] = world;
+  } catch (e) {
+    if (selected?.path === s.path) setStatus(String(e), "error");
+  } finally {
+    if (selected?.path === s.path) {
+      busy = null;
+      renderDesignTab();
+    }
+  }
+}
+
+// ---------- Reflect: active recall in service of participation ----------
+
+function ensureReflect(treeId: string): ReflectThreads {
+  if (!reflectState[treeId]) reflectState[treeId] = { teach_back: [], propose_next: [] };
+  return reflectState[treeId];
+}
+
+/** Append the Reflect section (teach-back + propose-next) after a tree's body. */
+function renderReflect(scroll: HTMLElement, treeId: string) {
+  ensureReflect(treeId);
+  const section = document.createElement("div");
+  section.className = "reflect-section";
+  section.innerHTML = `<h4 class="reflect-section-title">Reflect</h4>
+    <p class="reflect-section-hint">Understanding is for taking part, not just
+      approving. Put it in your own words, then say what you'd do next — Claude
+      responds with formative feedback, never a grade.</p>`;
+  section.appendChild(
+    reflectBlock(treeId, "teach_back", "Explain it back",
+      "Describe this component in your own words. Claude flags what you nailed and what's worth adding.",
+      "In my understanding, this works by…"),
+  );
+  section.appendChild(
+    reflectBlock(treeId, "propose_next", "Propose the next change",
+      "Now that you get it — what would you change or build next? Claude checks how it fits the current design.",
+      "Next, I'd like to…"),
+  );
+  scroll.appendChild(section);
+}
+
+function reflectBlock(
+  treeId: string,
+  mode: ReflectMode,
+  heading: string,
+  desc: string,
+  placeholder: string,
+): HTMLElement {
+  const block = document.createElement("div");
+  block.className = "reflect-block";
+  block.innerHTML = `
+    <div class="reflect-head">${escapeHtml(heading)}</div>
+    <div class="reflect-desc">${escapeHtml(desc)}</div>
+    <div class="reflect-thread" data-mode="${mode}"></div>
+    <form class="reflect-input" data-mode="${mode}">
+      <textarea rows="2" placeholder="${escapeHtml(placeholder)}"></textarea>
+      <button type="submit" class="ghost-btn">Send</button>
+    </form>`;
+  const form = block.querySelector("form") as HTMLFormElement;
+  const ta = block.querySelector("textarea") as HTMLTextAreaElement;
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = ta.value.trim();
+    if (text) {
+      ta.value = "";
+      sendReflect(treeId, mode, text);
+    }
+  });
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  renderReflectThreadInto(block.querySelector(`.reflect-thread`) as HTMLElement, treeId, mode);
+  return block;
+}
+
+/** Find the live thread element for a tree/mode, if the Reflect section for
+ *  that tree is currently on screen. */
+function reflectThreadEl(treeId: string, mode: ReflectMode): HTMLElement | null {
+  if (currentTreeId !== treeId) return null;
+  return designView.querySelector(`.reflect-thread[data-mode="${mode}"]`);
+}
+
+function renderReflectThreadInto(thread: HTMLElement, treeId: string, mode: ReflectMode) {
+  const turns = ensureReflect(treeId)[mode];
+  thread.innerHTML = "";
+  for (const turn of turns) {
+    const el = document.createElement("div");
+    el.className = `reflect-turn ${turn.role}`;
+    el.innerHTML =
+      turn.role === "user" ? escapeHtml(turn.content) : (marked.parse(turn.content) as string);
+    thread.appendChild(el);
+  }
+  if (reflecting && reflecting.treeId === treeId && reflecting.mode === mode) {
+    const el = document.createElement("div");
+    el.className = "reflect-turn assistant pending";
+    el.innerHTML = `<span class="ask-dots"><span></span><span></span><span></span></span>`;
+    thread.appendChild(el);
+  }
+}
+
+function refreshReflectThread(treeId: string, mode: ReflectMode) {
+  const thread = reflectThreadEl(treeId, mode);
+  if (thread) renderReflectThreadInto(thread, treeId, mode);
+}
+
+async function sendReflect(treeId: string, mode: ReflectMode, input: string) {
+  if (!selected || reflecting) return;
+  const s = selected;
+  const tref = forest?.trees.find((t) => t.id === treeId);
+  const focus = tref?.name ?? "";
+  const threads = ensureReflect(treeId);
+  const history = threads[mode].slice(); // prior turns, before this one
+  threads[mode].push({ role: "user", content: input });
+  reflecting = { treeId, mode };
+  refreshReflectThread(treeId, mode);
+  try {
+    const ans = await invoke<string>("reflect", {
+      path: s.path,
+      focus,
+      mode,
+      history,
+      input,
+      model,
+      lang,
+    });
+    if (selected?.path !== s.path) return;
+    threads[mode].push({ role: "assistant", content: ans });
+  } catch (e) {
+    if (selected?.path === s.path)
+      threads[mode].push({ role: "assistant", content: `⚠︎ ${String(e)}` });
+  } finally {
+    if (selected?.path === s.path) {
+      reflecting = null;
+      refreshReflectThread(treeId, mode);
+    }
+  }
 }
 
 function openTree(id: string) {
@@ -652,6 +1408,9 @@ async function generateForest(force: boolean) {
     }
     forest = f;
     treeCache = {};
+    microworldCache = {};
+    activeMicroworld = {};
+    microworldStep = {};
     busy = null;
     renderDesignTab();
     updateGenerateButton();
@@ -689,6 +1448,10 @@ async function generateTree(id: string, name: string, force: boolean) {
       return;
     }
     treeCache[id] = t;
+    for (const key of Object.keys(microworldCache)) {
+      if (key.startsWith(`${id}::`)) delete microworldCache[key];
+    }
+    activeMicroworld[id] = null;
     busy = null;
     renderDesignTab();
     updateGenerateButton();
@@ -942,8 +1705,17 @@ function updateLangUI() {
   });
 }
 
+function updateMinimapModeUI() {
+  document.querySelectorAll<HTMLButtonElement>("#minimap-mode-select button").forEach((button) => {
+    const active = button.dataset.minimapMode === minimapMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-checked", String(active));
+  });
+}
+
 function openSettings() {
   updateLangUI();
+  updateMinimapModeUI();
   $("#settings-modal").classList.remove("hidden");
 }
 
@@ -977,6 +1749,20 @@ async function importLink() {
 
 function wireUi() {
   filterInput.addEventListener("input", renderSessionList);
+  transcriptView.addEventListener("scroll", scheduleTranscriptProgress, { passive: true });
+  transcriptMapTrack.addEventListener("mousemove", (event) => {
+    const markerIndex = transcriptMarkerAt(event.clientY);
+    if (markerIndex < 0 || markerIndex === transcriptHoverMarker) return;
+    const marker = transcriptNavMarkers[markerIndex];
+    showTranscriptPreview(marker, Number(marker.dataset.entryIndex));
+  });
+  transcriptMapTrack.addEventListener("mouseleave", hideTranscriptPreview);
+  transcriptMapTrack.addEventListener("click", (event) => {
+    const markerIndex = transcriptMarkerAt(event.clientY);
+    if (markerIndex < 0) return;
+    jumpToTranscriptEntry(Number(transcriptNavMarkers[markerIndex].dataset.entryIndex));
+  });
+  window.addEventListener("resize", scheduleTranscriptNavigation);
   $("#refresh-btn").addEventListener("click", refreshSessions);
   // Shared Generate / Regenerate, acting on the forest or the current tree.
   $("#regen-btn").addEventListener("click", () => {
@@ -1028,6 +1814,14 @@ function wireUi() {
       if (selected) selectSession(selected);
     });
   });
+  document.querySelectorAll("#minimap-mode-select button").forEach((b) => {
+    b.addEventListener("click", () => {
+      minimapMode = (b as HTMLElement).dataset.minimapMode as TranscriptMinimapMode;
+      localStorage.setItem("bp-minimap-mode", minimapMode);
+      updateMinimapModeUI();
+      buildTranscriptNavigation();
+    });
+  });
 
   // Settings modal
   $("#settings-btn").addEventListener("click", openSettings);
@@ -1043,6 +1837,10 @@ function wireUi() {
         .querySelectorAll("#source-nav button")
         .forEach((x) => x.classList.toggle("active", x === b));
       $("#import-link-btn").classList.toggle("hidden", sourceTab !== "links");
+      // Leave select mode when switching lists (chosen paths belong to a tab).
+      selectMode = false;
+      confirmingBulk = false;
+      selectedForDelete.clear();
       renderSessionList();
     });
   });
@@ -1078,6 +1876,7 @@ function wireUi() {
 window.addEventListener("DOMContentLoaded", () => {
   wireUi();
   updateModelUI();
+  updateMinimapModeUI();
   refreshSessions();
   refreshDeps();
   checkForUpdates(false);
