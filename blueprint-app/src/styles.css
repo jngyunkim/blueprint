@@ -65,13 +65,10 @@ button {
   font-family: inherit;
 }
 
-/* The window is a neutral "desk"; the sidebar and main area float on it as
-   rounded rectangular cards with a small gap around and between them. */
+/* Neutral "desk" behind a floating sidebar card; the main area fills the rest. */
 #app {
   display: flex;
-  gap: 8px;
   height: 100vh;
-  padding: 8px;
   background: var(--desk);
 }
 
@@ -79,6 +76,7 @@ button {
 #sidebar {
   width: 300px;
   flex-shrink: 0;
+  margin: 8px;
   background: var(--sidebar-bg);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -391,9 +389,6 @@ button {
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: var(--panel-shadow);
 }
 
 .empty-state {
@@ -805,8 +800,11 @@ button {
   background: var(--panel-2);
   overflow: hidden;
 }
-.msg-aside > summary {
-  list-style: none;
+.aside-summary {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
   cursor: pointer;
   padding: 7px 12px;
   display: flex;
@@ -815,13 +813,15 @@ button {
   font-size: 12px;
   color: var(--text-2);
 }
-.msg-aside > summary::-webkit-details-marker { display: none; }
-.msg-aside > summary::before {
-  content: "▸";
+.aside-caret {
   font-size: 10px;
   color: var(--muted);
+  transition: transform 0.12s;
+  flex-shrink: 0;
 }
-.msg-aside[open] > summary::before { content: "▾"; }
+.msg-aside.open .aside-caret {
+  transform: rotate(90deg);
+}
 .aside-badge {
   font-weight: 650;
   color: var(--text-2);

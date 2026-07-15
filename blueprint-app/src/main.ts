@@ -310,29 +310,44 @@ function renderTranscript(blocks: Msg[]) {
         `<div class="msg-body">${marked.parse(b.text) as string}</div>`;
       transcriptView.appendChild(el);
     } else if (b.kind === "thinking") {
-      const d = document.createElement("details");
-      d.className = "msg-aside msg-thinking";
-      d.innerHTML =
-        `<summary><span class="aside-badge">✻ Thinking</span></summary>` +
-        `<div class="aside-body">${marked.parse(b.text) as string}</div>`;
-      transcriptView.appendChild(d);
+      transcriptView.appendChild(
+        aside("msg-thinking", `<span class="aside-badge">✻ Thinking</span>`,
+          `<div class="aside-body">${marked.parse(b.text) as string}</div>`),
+      );
     } else if (b.kind === "tool_use") {
-      const d = document.createElement("details");
-      d.className = "msg-aside msg-tool";
       const sub = b.subtitle ? `<code class="aside-sub">${escapeHtml(b.subtitle)}</code>` : "";
-      d.innerHTML =
-        `<summary><span class="aside-badge tool">⚙ ${escapeHtml(b.tool || "tool")}</span>${sub}</summary>` +
-        `<pre class="aside-code">${escapeHtml(b.text)}</pre>`;
-      transcriptView.appendChild(d);
+      transcriptView.appendChild(
+        aside("msg-tool", `<span class="aside-badge tool">⚙ ${escapeHtml(b.tool || "tool")}</span>${sub}`,
+          `<pre class="aside-code">${escapeHtml(b.text)}</pre>`),
+      );
     } else if (b.kind === "tool_result") {
-      const d = document.createElement("details");
-      d.className = "msg-aside msg-result" + (b.is_error ? " error" : "");
-      d.innerHTML =
-        `<summary><span class="aside-badge">${b.is_error ? "⚠ Tool error" : "↳ Tool result"}</span></summary>` +
-        `<pre class="aside-code">${escapeHtml(b.text)}</pre>`;
-      transcriptView.appendChild(d);
+      transcriptView.appendChild(
+        aside("msg-result" + (b.is_error ? " error" : ""),
+          `<span class="aside-badge">${b.is_error ? "⚠ Tool error" : "↳ Tool result"}</span>`,
+          `<pre class="aside-code">${escapeHtml(b.text)}</pre>`),
+      );
     }
   }
+}
+
+/** A collapsible aside toggled by JS (WKWebView breaks <details> when the
+ *  summary is a flex container, so we don't rely on native <details>). */
+function aside(cls: string, summaryHTML: string, bodyHTML: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "msg-aside " + cls;
+  const btn = document.createElement("button");
+  btn.className = "aside-summary";
+  btn.innerHTML = `<span class="aside-caret">▸</span>${summaryHTML}`;
+  const body = document.createElement("div");
+  body.className = "aside-content hidden";
+  body.innerHTML = bodyHTML;
+  btn.addEventListener("click", () => {
+    const nowHidden = body.classList.toggle("hidden");
+    wrap.classList.toggle("open", !nowHidden);
+  });
+  wrap.appendChild(btn);
+  wrap.appendChild(body);
+  return wrap;
 }
 
 // ---------- Diagrams (rendered inline inside design levels) ----------
