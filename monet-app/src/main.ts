@@ -1719,9 +1719,7 @@ function showUpdateBanner(update: Update) {
     install.textContent = "Downloading…";
     error.hidden = true;
     try {
-      await update.downloadAndInstall();
-      install.textContent = "Restarting…";
-      await invoke("restart_after_update");
+      await invoke("install_update_and_restart");
     } catch (e) {
       install.disabled = false;
       install.textContent = "Retry";

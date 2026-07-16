@@ -13,6 +13,7 @@ use diagram::DepStatus;
 use forest::{Forest, Tree};
 use microworld::Microworld;
 use session::SessionMeta;
+use tauri_plugin_updater::UpdaterExt;
 
 const CONTEXT_CACHE_VERSION: &str = "context-v2";
 
@@ -390,12 +391,23 @@ fn app_bundle_path(executable: &std::path::Path) -> Result<std::path::PathBuf, S
 }
 
 #[tauri::command]
-fn restart_after_update() -> Result<(), String> {
+async fn install_update_and_restart(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let executable = std::env::current_exe()
             .map_err(|e| format!("could not resolve current executable: {e}"))?;
         let bundle = app_bundle_path(&executable)?;
+        let update = app
+            .updater()
+            .map_err(|e| format!("could not initialize updater: {e}"))?
+            .check()
+            .await
+            .map_err(|e| format!("could not check for update: {e}"))?
+            .ok_or("the update is no longer available")?;
+        update
+            .download_and_install(|_, _| {}, || {})
+            .await
+            .map_err(|e| format!("could not install update: {e}"))?;
         let status = std::process::Command::new("/usr/bin/open")
             .arg("-n")
             .arg(&bundle)
@@ -411,7 +423,10 @@ fn restart_after_update() -> Result<(), String> {
     }
 
     #[cfg(not(target_os = "macos"))]
-    Err("restart after update is only supported on macOS".to_string())
+    {
+        let _ = app;
+        Err("install and restart is only supported on macOS".to_string())
+    }
 }
 
 #[cfg(test)]
@@ -478,7 +493,7 @@ pub fn run() {
             import_link,
             refresh_source,
             delete_session,
-            restart_after_update
+            install_update_and_restart
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
